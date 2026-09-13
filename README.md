@@ -1,6 +1,6 @@
 # WarmPath
 
-**Live app:** https://warmpath-xzfg.onrender.com · **Access key:** `Etg1rcYCY9qT0iWGxo4dzXO_` · **Demo video:** coming soon
+**Live app:** https://warmpath-xzfg.onrender.com · **Access key:** `Etg1rcYCY9qT0iWGxo4dzXO_` · **Demo video:**(https://www.loom.com/share/f59694a6b64841ef8627e8f0dee77680)
 
 
 **Someone shows buying intent on LinkedIn. WarmPath checks whether you already know their company, writes a message where every sentence cites what it read, asks you in Slack, and books the meeting only when they say yes.**
