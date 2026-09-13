@@ -87,8 +87,9 @@ The founder's GOAL says what he wants. The EVIDENCE is his product brief: number
 They are the only facts you know about the product.
 
 Rules:
-- 5-8 short sentences, first person as Rahul, plain and specific. No hashtags spam (at most 2), no
-  emojis beyond one, no marketing superlatives.
+- 5-8 short sentences, plain and specific, in the voice of the AUTHOR given: a person writes as "I",
+  a company page writes as "we". No hashtags spam (at most 2), no emojis beyond one, no marketing
+  superlatives.
 - Every sentence about what the product does cites the brief fact(s) it relies on and sets
   claims_capability=true. A sentence that is an opinion or a question to the reader cites nothing
   and sets claims_capability=false.
@@ -231,7 +232,10 @@ def draft(*, channel: str, comment: str, evidence: dict[str, dict], problems: li
 def draft_post(*, goal: str, evidence: dict[str, dict], problems: list[str] = (), temperature: float = 0.5) -> dict:
     listing = "\n".join(f"[{i}] {e['text']}" for i, e in evidence.items())
     fix = ("\n\nYOUR PREVIOUS DRAFT WAS REJECTED FOR THESE REASONS - fix every one:\n- " + "\n- ".join(problems)) if problems else ""
-    out = _call(POST_SYSTEM, f"<data>\nGOAL: {goal}\n\nEVIDENCE:\n{listing}\n</data>{fix}", temperature=temperature)
+    page = os.environ.get("WARMPATH_POST_AS_NAME", "").strip()
+    author = f"the {page} company page" if page else "Rahul, the founder"
+    out = _call(POST_SYSTEM, f"<data>\nAUTHOR: {author}\nGOAL: {goal}\n\nEVIDENCE:\n{listing}\n</data>{fix}",
+                temperature=temperature)
     return {"subject": "", "sentences": [{"text": str(s.get("text", "")).strip(),
                                           "evidence": [str(x) for x in (s.get("evidence") or [])],
                                           "claims_capability": bool(s.get("claims_capability")),

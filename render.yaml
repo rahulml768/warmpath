@@ -21,6 +21,10 @@ services:
         value: Asia/Kolkata
       - key: WARMPATH_ACCESS_KEY
         sync: false
+      - key: WARMPATH_POST_AS_ORGANIZATION
+        value: "144803486"
+      - key: WARMPATH_POST_AS_NAME
+        value: Agentra
       - key: WARMPATH_LIVE_ALLOWLIST
         sync: false
       - key: WARMPATH_OUR_ADDRESSES

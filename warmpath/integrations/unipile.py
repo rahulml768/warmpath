@@ -109,6 +109,10 @@ def create_post(*, text: str, live: bool) -> dict:
     import uuid
     boundary = "warmpath" + uuid.uuid4().hex
     fields = {"account_id": os.environ["UNIPILE_ACCOUNT_ID"].strip(), "text": text}
+    # Post as a company page the connected member administers, when one is configured.
+    org = os.environ.get("WARMPATH_POST_AS_ORGANIZATION", "").strip()
+    if org:
+        fields["as_organization"] = org
     body = b"".join(
         f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode("utf-8")
         for k, v in fields.items()) + f"--{boundary}--\r\n".encode()
