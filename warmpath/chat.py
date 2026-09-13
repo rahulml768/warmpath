@@ -149,7 +149,7 @@ class ChatApprover:
         if os.environ.get("SLACK_APPROVER_ID") and os.environ.get("WARMPATH_SLACK_APPROVALS", "1") != "0":
             try:
                 where = slack.post(os.environ["SLACK_APPROVER_ID"].strip(), payload["card"] +
-                                   "\nReply in this message's thread with exactly: send, review, or ignore.")
+                                   "\nReply with exactly send, review or ignore - right here, or in this message's thread.")
             except Exception as exc:  # noqa: BLE001 - chat approval still works without Slack
                 self.chat.post("Alex", "text", f"Slack didn't take the card ({str(exc)[:80]}), so answer here.")
         answer, via, end, last_slack = "timeout", "", time.time() + self.timeout_s, 0.0

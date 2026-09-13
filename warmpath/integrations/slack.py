@@ -60,6 +60,25 @@ def check_decision(*, channel: str, ts: str) -> str | None:
             return "rejected"
         if word in REVIEW:
             return "review"
+    # A plain reply in the DM counts too, but only when it cannot belong to another card: it must be the
+    # founder's FIRST message after this card, with no newer bot message in between. Once another card
+    # arrives, a plain "send" is about that one - and a first message that isn't a decision ends the look.
+    h = _slack("conversations.history", {"channel": channel, "oldest": ts, "limit": 50})
+    for m in sorted(h.get("messages", []), key=lambda x: float(x.get("ts") or 0)):
+        if m.get("ts") == ts or (m.get("thread_ts") and m.get("thread_ts") != m.get("ts")):
+            continue
+        if m.get("bot_id") or m.get("subtype"):
+            return None
+        if m.get("user") != approver:
+            continue
+        word = (m.get("text") or "").strip().lower()
+        if word in APPROVE:
+            return "approved"
+        if word in REJECT:
+            return "rejected"
+        if word in REVIEW:
+            return "review"
+        return None
     return None
 
 
@@ -78,6 +97,6 @@ def approver_from_slack(timeout_s: int = 600):
     """An approver for the pipeline that asks the founder in a Slack DM."""
     def ask(run, payload: dict) -> str:
         where = post(os.environ["SLACK_APPROVER_ID"].strip(), payload["card"] +
-                     "\nReply in this message's thread with exactly: send, review, or ignore.")
+                     "\nReply with exactly send, review or ignore - right here, or in this message's thread.")
         return wait_for_decision(channel=where["channel"], ts=where["ts"], timeout_s=timeout_s)
     return ask

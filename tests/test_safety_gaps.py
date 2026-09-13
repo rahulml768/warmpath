@@ -47,6 +47,8 @@ def test_policy_requires_boolean_approval(approval):
 def test_slack_approval_is_exact_authorized_and_card_specific(monkeypatch, text, user, thread, expected):
     monkeypatch.setenv('SLACK_APPROVER_ID', 'founder')
     def fake(method, params):
+        if method == 'conversations.history':
+            return {'messages': []}
         assert method == 'conversations.replies' and params['ts'] == '1'
         return {'messages': [{'ts': '2', 'thread_ts': thread, 'user': user, 'text': text}]}
     monkeypatch.setattr(slack, '_slack', fake)
@@ -70,3 +72,18 @@ def test_calendar_requires_entire_meeting_free(monkeypatch, end, expected):
 def test_competing_booking_resume_has_legal_exit():
     run = Run.start('retry', state='CALENDAR_FAILED')
     run.move('BLOCKED_DUPLICATE')
+
+
+@pytest.mark.parametrize('history,expected', [
+    ([{'ts': '2', 'user': 'founder', 'text': 'send'}], 'approved'),                     # first message after the card
+    ([{'ts': '2', 'bot_id': 'B1', 'text': 'another card'},
+      {'ts': '3', 'user': 'founder', 'text': 'send'}], None),                          # a newer card owns plain replies
+    ([{'ts': '2', 'user': 'founder', 'text': 'hmm let me think'},
+      {'ts': '3', 'user': 'founder', 'text': 'send'}], None),                          # first message wasn't a decision
+    ([{'ts': '2', 'user': 'stranger', 'text': 'send'}], None),                         # only the approver
+    ([{'ts': '2', 'user': 'founder', 'text': 'send later'}], None),                    # exact words only
+])
+def test_a_plain_dm_reply_counts_only_when_it_cannot_mean_another_card(monkeypatch, history, expected):
+    monkeypatch.setenv('SLACK_APPROVER_ID', 'founder')
+    monkeypatch.setattr(slack, '_slack', lambda method, params: {'messages': history if method == 'conversations.history' else []})
+    assert slack.check_decision(channel='dm', ts='1') == expected
