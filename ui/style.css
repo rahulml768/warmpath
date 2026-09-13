@@ -242,3 +242,28 @@ table.leads .said { color: var(--body); font-size: 12.5px; margin-top: 3px; max-
 .slackcard { font-size: 13.5px; color: var(--body); line-height: 1.55; margin-bottom: 10px }
 .slackcard code { font: 12px var(--mono); background: var(--chip); border-radius: 4px; padding: 0 4px }
 .sc-quote { border-left: 3px solid var(--violet); background: #FAFAFA; border-radius: 0 8px 8px 0; padding: 8px 12px; margin: 8px 0; white-space: normal }
+
+/* ── relay: which agent has the work, and cards arriving one by one ──────── */
+.relay { display: flex; align-items: center; gap: 0; flex-wrap: wrap; background: #fff; border: 1px solid #e7e3f3; border-radius: 14px; padding: 10px 14px; margin: 6px 0 2px 44px }
+.relay-step { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 10px; position: relative; transition: background .3s, opacity .3s }
+.relay-step .av { width: 30px; height: 30px; border-radius: 9px }
+.relay-label { display: flex; flex-direction: column; line-height: 1.2 }
+.relay-label b { font-size: 12.5px; color: var(--ink) }
+.relay-label span { font-size: 11px; color: var(--muted) }
+.relay-step.todo { opacity: .45 }
+.relay-step.active { background: var(--accent-soft) }
+.relay-step.active .av { box-shadow: 0 0 0 0 rgba(91,33,182,.5); animation: relayPulse 1.6s infinite }
+.relay-step.waiting { background: #fef3c7 }
+.relay-step.waiting .av { animation: relayPulseAmber 1.6s infinite }
+.relay-step.done .relay-label b { color: var(--ok) }
+.relay-tick { position: absolute; left: 30px; top: 0; width: 15px; height: 15px; border-radius: 50%; background: var(--ok); color: #fff; font-size: 10px; display: grid; place-items: center; font-weight: 800 }
+.relay-line { width: 22px; height: 2px; background: var(--line); border-radius: 2px }
+.relay-line.lit { background: var(--ok) }
+.relay-end { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--chip); color: var(--soft); font-weight: 800 }
+.relay-step.done .relay-end { background: var(--ok-soft); color: var(--ok) }
+@keyframes relayPulse { 0% { box-shadow: 0 0 0 0 rgba(91,33,182,.45) } 70% { box-shadow: 0 0 0 8px rgba(91,33,182,0) } 100% { box-shadow: 0 0 0 0 rgba(91,33,182,0) } }
+@keyframes relayPulseAmber { 0% { box-shadow: 0 0 0 0 rgba(180,83,9,.45) } 70% { box-shadow: 0 0 0 8px rgba(180,83,9,0) } 100% { box-shadow: 0 0 0 0 rgba(180,83,9,0) } }
+.msg.enter { animation: cardIn .45s cubic-bezier(.2,.8,.2,1) both }
+@keyframes cardIn { from { opacity: 0; transform: translateY(10px) scale(.985) } to { opacity: 1; transform: none } }
+@media (max-width: 900px) { .relay { margin-left: 0 } .relay-label span { display: none } }
+@media (prefers-reduced-motion: reduce) { .msg.enter, .relay-step .av { animation: none } }

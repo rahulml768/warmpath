@@ -167,6 +167,41 @@ function typing(busy) {
 }
 setInterval(() => { const el = document.getElementById("elapsed"); if (el && workingSince) el.textContent = ((Date.now() - workingSince) / 1000).toFixed(1) + "s"; }, 100);
 
+/* ── the relay: who has the work right now ─────────────────────────────── */
+const seenIds = new Set();
+let firstPaint = true;
+
+/** The stages a run goes through, and which chat cards prove each one happened. */
+function relayStages(runMsgs) {
+  const kinds = new Set(runMsgs.map(m => m.kind));
+  const approval = runMsgs.filter(m => m.kind === "approval").pop();
+  const result = runMsgs.filter(m => m.kind === "result").pop();
+  const decided = approval && approval.payload.status && approval.payload.status !== "pending";
+  const you = {who: "you", label: "You approve", done: !!decided || (!!result && !approval), waiting: !!approval && !decided};
+  const finish = {who: "done", label: result ? (result.payload.action ? "Sent" : "Held back") : "Done", done: !!result};
+  if (kinds.has("post_draft")) return [{who: "Quinn", label: "Writes the post", done: true}, you, finish];
+  if (kinds.has("reply") || kinds.has("meeting_read") || kinds.has("offer"))
+    return [{who: "Morgan", label: "Reads the reply", done: kinds.has("meeting_read") || kinds.has("offer") || !!result},
+            {who: "Casey", label: "Writes it", done: kinds.has("draft") || !!result}, you, finish];
+  return [{who: "Quinn", label: "Buying intent?", done: kinds.has("intent")},
+          {who: "Jordan", label: "Who do we know?", done: kinds.has("relationship") || (!!result && !kinds.has("relationship"))},
+          {who: "Casey", label: "Proves every line", done: kinds.has("draft") || (!!result && !kinds.has("draft"))},
+          you, finish];
+}
+
+function relayHtml(runMsgs) {
+  const stages = relayStages(runMsgs);
+  const active = stages.findIndex(s => !s.done);
+  return `<div class="relay">${stages.map((s, i) => {
+    const state = s.done ? "done" : s.waiting ? "waiting" : i === active ? "active" : "todo";
+    const avatar = s.who === "you" ? `<img class="av" src="agents/human-founder.webp" alt="">`
+                 : s.who === "done" ? `<span class="relay-end">${s.done ? "✓" : "•"}</span>` : face(s.who, "av");
+    return `${i ? `<span class="relay-line ${stages[i - 1].done ? "lit" : ""}"></span>` : ""}
+      <div class="relay-step ${state}">${avatar}<div class="relay-label"><b>${s.who === "you" ? "You" : s.who === "done" ? s.label : esc(s.who)}</b>
+      <span>${s.who === "done" ? "" : esc(s.label)}</span></div>${s.done && s.who !== "done" ? '<span class="relay-tick">✓</span>' : ""}</div>`;
+  }).join("")}</div>`;
+}
+
 function renderChat(msgs, busy) {
   const waitingOnYou = msgs.some(m => m.kind === "approval" && m.payload.status === "pending");
   const sig = JSON.stringify([msgs.map(m => [m.id, m.payload && m.payload.status]), busy && !waitingOnYou]);
@@ -174,10 +209,25 @@ function renderChat(msgs, busy) {
   nav.hidden = !waitingOnYou; nav.textContent = "1";
   if (sig === lastSig) return;
   lastSig = sig;
-  document.getElementById("thread").innerHTML = (msgs.length ? msgs.map(m => m.author === "you"
-    ? `<div class="msg you"><div class="bubble">${esc(m.text)}</div></div>`
-    : `<div class="msg">${face(m.author, "av") || "<span></span>"}<div class="msg-body"><div class="by"><b>${esc(m.author)}</b> · ${esc(ROLE[m.author] || "")}</div>${cardHtml(m)}</div></div>`).join("")
-    : hero()) + typing(busy && !waitingOnYou);
+  const byRun = {};
+  msgs.forEach(m => { const r = m.payload && m.payload.run_id; if (r) (byRun[r] = byRun[r] || []).push(m); });
+  const relayShown = new Set();
+  const html = msgs.map(m => {
+    const fresh = !firstPaint && !seenIds.has(m.id);
+    const run = m.payload && m.payload.run_id;
+    let relay = "";
+    if (run && !relayShown.has(run) && byRun[run].length > 1) {
+      relayShown.add(run);
+      relay = relayHtml(byRun[run]);
+    }
+    const body = m.author === "you"
+      ? `<div class="msg you ${fresh ? "enter" : ""}"><div class="bubble">${esc(m.text)}</div></div>`
+      : `<div class="msg ${fresh ? "enter" : ""}">${face(m.author, "av") || "<span></span>"}<div class="msg-body"><div class="by"><b>${esc(m.author)}</b> · ${esc(ROLE[m.author] || "")}</div>${cardHtml(m)}</div></div>`;
+    return relay + body;
+  }).join("");
+  msgs.forEach(m => seenIds.add(m.id));
+  firstPaint = false;
+  document.getElementById("thread").innerHTML = (msgs.length ? html : hero()) + typing(busy && !waitingOnYou);
   document.getElementById("chips").hidden = msgs.length > 0 && busy;
   if (stickBottom) scroller.scrollTop = scroller.scrollHeight;
 }
