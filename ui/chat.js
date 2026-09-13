@@ -87,7 +87,7 @@ function cardHtml(m) {
       const label = {approved: "Approved", rejected: "Ignored", review: "Held for your review", timeout: "No answer · nothing sent",
                      expired: "Expired · a fresh card was posted below"}[p.status] || "";
       const isPost = p.run_kind === "post";
-      const title = isPost ? `Publish this post on LinkedIn${p.author ? ` as ${esc(p.author)}` : ""}?` : "Send it?";
+      const title = isPost ? `Publish this post on LinkedIn${p.page_author ? ` as ${esc(p.page_author)}` : ""}?` : "Send it?";
       return `<div class="card ${done ? "" : "approve"}"><h4>${title}</h4>
         ${isPost ? `<div style="color:var(--body);font-size:13.5px;margin-bottom:10px">The preview above is exactly what goes out. It's public, so it waits for you.</div>`
                  : `<div class="slackcard">${slackMarkdown(p.card || "")}</div>`}
@@ -118,7 +118,7 @@ function cardHtml(m) {
         <div>Accepted</div><div>${esc(p.offered_slot_id || "none of the times we offered")}</div>
         <div>They said</div><div>${esc(p.day_key || "-")} ${esc(p.time_24h || "")} ${esc(p.timezone_stated || "")}</div></div></div>`;
     case "post_draft": {
-      const who = p.author || "Rahul Mittal";
+      const who = p.page_author || "Rahul Mittal";
       const failed = (p.problems || []).length && !(p.sentences || []).length;
       return `<div class="card"><h4>LinkedIn post preview ${failed ? '<span class="pill p-bad">claims failed · not sent</span>' : '<span class="pill p-ok">every product claim cites your brief</span>'}</h4>
         <div class="li-post">
