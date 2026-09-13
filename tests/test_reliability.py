@@ -431,3 +431,23 @@ def test_a_post_that_invents_a_result_never_reaches_approval(monkeypatch, tmp_pa
     asked = []
     run = pipeline.process_goal("grow", approver=lambda r, p: asked.append(1) or "approved", ledger=Ledger(tmp_path / "p.db"))
     assert run.state == "REVIEW_REQUIRED" and not asked
+
+
+def test_a_verified_work_email_places_someone_at_that_company(monkeypatch, tmp_path):
+    """LinkedIn shows a company typed as plain text (no page, no website); the member shares a work
+    address. The domain comes from that verified address - never from the company name."""
+    Stubs(monkeypatch, records=[rec(1, "known@ascot.example", "inbound", name="Known"),
+                                rec(2, "known@ascot.example", "outbound", name="Known")])
+    c = {**comments()["c-warm-acme"], "profile": {"name": "Rahul", "headline": "Engineer at Ascot",
+         "emails": ["rahul@ascot.example"], "work": [{"company": "Ascot", "company_id": "", "current": True}]}}
+    run, *_ = go(c, tmp_path)
+    ident = next(s for s in run.steps if s.tool == "identity.resolve").data
+    assert ident["domain"] == "ascot.example" and ident["domain_source"] == "their verified work email"
+
+
+def test_a_free_mail_address_never_becomes_a_company(monkeypatch, tmp_path):
+    Stubs(monkeypatch)
+    c = {**comments()["c-warm-acme"], "profile": {"name": "Rahul", "headline": "Engineer at Ascot",
+         "emails": ["rahul.personal@gmail.com"], "work": [{"company": "Ascot", "company_id": "", "current": True}]}}
+    run, *_ = go(c, tmp_path)
+    assert next(s for s in run.steps if s.tool == "identity.resolve").data["domain"] == ""

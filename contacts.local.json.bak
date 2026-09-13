@@ -1,0 +1,10 @@
+[
+  {
+    "name": "John Smith",
+    "email": "rahul@ascot.ws",
+    "company": "Acme",
+    "domain": "ascot.ws",
+    "linkedin_url": "https://www.linkedin.com/in/john-smith-demo",
+    "_note": "demo persona: a test mailbox the founder controls, with a seeded prior conversation"
+  }
+]
