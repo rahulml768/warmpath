@@ -183,7 +183,7 @@ function relayStages(runMsgs) {
                   (kinds.has("post_draft") ? "post" : kinds.has("meeting_read") || kinds.has("offer") ? "reply" : "lead");
   if (runKind === "post") return [{who: "Quinn", label: "Writes the post", done: true}, you, finish];
   if (runKind === "reply")
-    return [{who: "Morgan", label: "Reads the reply", done: kinds.has("meeting_read") || kinds.has("offer") || !!result},
+    return [{who: "Morgan", label: "Reads the reply", done: kinds.has("meeting_read") || kinds.has("offer") || kinds.has("draft") || !!approval || !!result},
             {who: "Casey", label: "Writes it", done: kinds.has("draft") || !!result}, you, finish];
   return [{who: "Quinn", label: "Buying intent?", done: kinds.has("intent")},
           {who: "Jordan", label: "Who do we know?", done: kinds.has("relationship") || (!!result && !kinds.has("relationship"))},
