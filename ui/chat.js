@@ -8,6 +8,16 @@ document.getElementById("chips").innerHTML = CHIPS.map(c => `<button type="butto
 const scroller = document.getElementById("chat-scroll");
 scroller.addEventListener("scroll", () => { stickBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 120; });
 
+/** The Slack card text, rendered the way Slack renders it instead of as raw *stars* and ```fences```. */
+function slackMarkdown(text) {
+  const parts = String(text).split("```");
+  return parts.map((chunk, i) => {
+    const safe = esc(chunk.trim());
+    if (i % 2 === 1) return `<div class="sc-quote">${safe.replace(/\n/g, "<br>")}</div>`;
+    return safe.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*([^*\n]+)\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
+  }).join("");
+}
+
 function sentencesHtml(p) {
   return (p.sentences || []).map(s => `<div class="sent">${esc(s.text)}${(s.evidence || []).map(id =>
     `<span class="cite" title="${esc((p.evidence || {})[id] || "missing evidence")}">${esc(id)}</span>`).join("")}</div>`).join("");
@@ -76,11 +86,14 @@ function cardHtml(m) {
       const done = p.status && p.status !== "pending";
       const label = {approved: "Approved", rejected: "Ignored", review: "Held for your review", timeout: "No answer · nothing sent",
                      expired: "Expired · a fresh card was posted below"}[p.status] || "";
-      return `<div class="card ${done ? "" : "approve"}"><h4>Send it?</h4>
-        <div style="white-space:pre-wrap;margin-bottom:12px">${esc(p.card || "")}</div>
-        <div style="color:var(--soft);font-size:13px">Approve here or reply <b>send</b> in Slack. First answer wins; silence sends nothing.</div>
+      const isPost = p.run_kind === "post";
+      const title = isPost ? `Publish this post on LinkedIn${p.author ? ` as ${esc(p.author)}` : ""}?` : "Send it?";
+      return `<div class="card ${done ? "" : "approve"}"><h4>${title}</h4>
+        ${isPost ? `<div style="color:var(--body);font-size:13.5px;margin-bottom:10px">The preview above is exactly what goes out. It's public, so it waits for you.</div>`
+                 : `<div class="slackcard">${slackMarkdown(p.card || "")}</div>`}
+        <div style="color:var(--soft);font-size:13px">Approve here, or reply <b>send</b> in the Slack card's thread. First answer wins; silence sends nothing.</div>
         ${done ? `<div class="btns"><span class="pill ${p.status === "approved" ? "p-ok" : "p-mute"}">${label}${p.via ? " · via " + esc(p.via) : ""}</span></div>`
-               : `<div class="btns"><button class="btn primary" data-approve="send" data-run="${esc(p.run_id)}">Send</button>
+               : `<div class="btns"><button class="btn primary" data-approve="send" data-run="${esc(p.run_id)}">${isPost ? "Publish" : "Send"}</button>
                    <button class="btn" data-approve="review" data-run="${esc(p.run_id)}">Review</button>
                    <button class="btn" data-approve="ignore" data-run="${esc(p.run_id)}">Ignore</button></div>`}</div>`;
     }
@@ -104,11 +117,24 @@ function cardHtml(m) {
       return `<div class="card"><h4>Wants a meeting: ${esc(p.wants)}</h4><div class="kv">
         <div>Accepted</div><div>${esc(p.offered_slot_id || "none of the times we offered")}</div>
         <div>They said</div><div>${esc(p.day_key || "-")} ${esc(p.time_24h || "")} ${esc(p.timezone_stated || "")}</div></div></div>`;
-    case "post_draft":
-      return `<div class="card"><h4>LinkedIn post draft ${(p.problems || []).length && !(p.sentences || []).length ? '<span class="pill p-bad">claims failed</span>' : '<span class="pill p-ok">every product claim cites your brief</span>'}</h4>
-        ${sentencesHtml(p)}
-        <div style="font-size:11.5px;color:var(--muted);margin-top:6px">Public, under your name - it waits for your approval. Hover a tag to see the brief fact.</div>
-        ${(p.problems || []).length ? `<details><summary>${p.problems.length} problem(s) caught and rewritten</summary><ul>${p.problems.map(x => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}</div>`;
+    case "post_draft": {
+      const who = p.author || "Rahul Mittal";
+      const failed = (p.problems || []).length && !(p.sentences || []).length;
+      return `<div class="card"><h4>LinkedIn post preview ${failed ? '<span class="pill p-bad">claims failed · not sent</span>' : '<span class="pill p-ok">every product claim cites your brief</span>'}</h4>
+        <div class="li-post">
+          <div class="li-head">
+            ${p.as_page ? `<div class="li-logo">${esc(who.charAt(0))}</div>` : `<img class="li-av" src="agents/human-founder.webp" alt="">`}
+            <div><div class="li-name">${esc(who)}</div>
+              <div class="li-sub">${p.as_page ? "Company page" : "Founder"} · Just now · 🌐</div></div>
+            <span class="li-follow">${p.as_page ? "+ Follow" : ""}</span>
+          </div>
+          <div class="li-body">${(p.sentences || []).map(s => `<p>${esc(s.text)}${(s.evidence || []).map(id =>
+              `<span class="cite" title="${esc((p.evidence || {})[id] || "missing evidence")}">${esc(id)}</span>`).join("")}</p>`).join("")}</div>
+          <div class="li-bar"><span>👍 Like</span><span>💬 Comment</span><span>🔁 Repost</span><span>➤ Send</span></div>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:8px">Hover a tag to see the brief fact behind that sentence. Tags are not published.</div>
+        ${(p.problems || []).length ? `<details><summary>${p.problems.length} problem(s) caught and rewritten before you saw it</summary><ul>${p.problems.map(x => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}</div>`;
+    }
     case "offer": {
       const w = p.window || {};
       return `<div class="card"><h4>Free times on your calendar ${p.checked ? '<span class="pill p-ok">checked live</span>' : '<span class="pill p-warn">calendar not checked</span>'}</h4>

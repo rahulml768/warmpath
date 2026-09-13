@@ -143,7 +143,8 @@ class ChatApprover:
     def __call__(self, run: Run, payload: dict) -> str:
         cards_so_far(self.chat, run, self.comment, self.sent)
         msg = self.chat.post("Alex", "approval", "Your call.", run_id=run.run_id, status="pending",
-                             card=payload["card"])
+                             card=payload["card"], run_kind=run.kind,
+                             author=os.environ.get("WARMPATH_POST_AS_NAME", "").strip())
         where = None
         if os.environ.get("SLACK_APPROVER_ID") and os.environ.get("WARMPATH_SLACK_APPROVALS", "1") != "0":
             try:
@@ -278,6 +279,8 @@ def _grow(chat: Chat, goal: str) -> None:
             last = next((x for x in reversed(run.steps) if x.tool == "claims.check"), None)
             d = (last.data or {}) if last else {}
             chat.post("Quinn", "post_draft", run_id=run.run_id, sentences=d.get("sentences", []),
+                      author=os.environ.get("WARMPATH_POST_AS_NAME", "").strip() or "Rahul Mittal",
+                      as_page=bool(os.environ.get("WARMPATH_POST_AS_ORGANIZATION", "").strip()),
                       evidence={k: v.get("text") for k, v in (d.get("evidence") or {}).items()},
                       problems=[p for x in run.steps if x.tool == "claims.check" for p in (x.data or {}).get("problems", [])])
             self.sent.update({"intent", "jordan", "casey"})
