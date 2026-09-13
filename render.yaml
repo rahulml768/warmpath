@@ -1,0 +1,57 @@
+# Render Blueprint: one always-on web service. It serves the console and runs the autopilot heartbeat.
+# Secrets are set in the Render dashboard (sync: false), never in this file.
+services:
+  - type: web
+    name: warmpath
+    runtime: python
+    plan: starter            # always on; the free plan sleeps after 15 min and the heartbeat stops with it
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: WARMPATH_MODE
+        value: live
+      - key: WARMPATH_HEARTBEAT_S
+        value: "5"
+      - key: WARMPATH_AUTOPILOT_RUN
+        value: "1"
+      - key: WARMPATH_TIMEZONE
+        value: Asia/Kolkata
+      - key: WARMPATH_ACCESS_KEY
+        sync: false
+      - key: WARMPATH_LIVE_ALLOWLIST
+        sync: false
+      - key: WARMPATH_OUR_ADDRESSES
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_APPROVER_ID
+        sync: false
+      - key: SLACK_NOTIFY_CHANNEL
+        sync: false
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: UNIPILE_API_KEY
+        sync: false
+      - key: UNIPILE_DSN
+        sync: false
+      - key: UNIPILE_ACCOUNT_ID
+        sync: false
+      - key: COMPOSIO_API_KEY
+        sync: false
+      - key: COMPOSIO_USER_ID
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: WARMPATH_DEMO_POST_JSON
+        sync: false
+      - key: WARMPATH_CONTACTS_JSON
+        sync: false

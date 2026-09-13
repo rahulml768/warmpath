@@ -1,0 +1,2 @@
+# WarmPath runs on the Python standard library only. Nothing to install.
+# (pytest is used to run the tests: pip install pytest)

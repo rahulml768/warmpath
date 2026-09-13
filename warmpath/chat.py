@@ -178,10 +178,21 @@ _busy = threading.Lock()
 
 
 def _source_files() -> tuple[str, str]:
-    demo = ROOT / "fixtures" / "demo_post.local.json"
-    contacts = ROOT / "contacts.local.json"
-    return (str(demo if demo.exists() else ROOT / "fixtures" / "eval_post.json"),
-            str(contacts if contacts.exists() else ROOT / "fixtures" / "eval_contacts.json"))
+    """Demo comments and the founder's contacts: local files, or env vars on a host (they hold real
+    test addresses, so they are never committed), or the synthetic evaluation fixtures."""
+    import tempfile
+    out = []
+    for local, env, fallback in ((ROOT / "fixtures" / "demo_post.local.json", "WARMPATH_DEMO_POST_JSON", "eval_post.json"),
+                                 (ROOT / "contacts.local.json", "WARMPATH_CONTACTS_JSON", "eval_contacts.json")):
+        if local.exists():
+            out.append(str(local))
+        elif os.environ.get(env, "").strip():
+            f = Path(tempfile.gettempdir()) / f"warmpath_{env.lower()}.json"
+            f.write_text(os.environ[env], encoding="utf-8")
+            out.append(str(f))
+        else:
+            out.append(str(ROOT / "fixtures" / fallback))
+    return out[0], out[1]
 
 
 def route(text: str) -> dict:

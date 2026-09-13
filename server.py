@@ -201,24 +201,58 @@ def integrations(force: bool = False) -> list[dict]:
     return data
 
 
+def _access_key() -> str:
+    import os
+    return os.environ.get("WARMPATH_ACCESS_KEY", "").strip()
+
+
 class Handler(BaseHTTPRequestHandler):
-    def _send(self, code: int, body: bytes, ctype: str) -> None:
+    def _send(self, code: int, body: bytes, ctype: str, headers: dict | None = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-store")
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
+
+    def _authorized(self) -> bool:
+        """With WARMPATH_ACCESS_KEY set, every page and API call needs it - this console can email people
+        and post on LinkedIn, so a public URL without a key would hand both to anyone who finds it."""
+        key = _access_key()
+        if not key:
+            return True
+        import hmac
+        from http.cookies import SimpleCookie
+        cookie = SimpleCookie(self.headers.get("Cookie") or "")
+        given = (cookie["wp_key"].value if "wp_key" in cookie else "") or self.headers.get("X-Access-Key", "")
+        return hmac.compare_digest(given, key)
+
+    def _login_page(self, error: str = "") -> None:
+        html = (UI / "login.html").read_text(encoding="utf-8").replace("{{error}}", error)
+        self._send(401 if error else 200, html.encode(), "text/html; charset=utf-8")
 
     def _json(self, obj, code: int = 200) -> None:
         self._send(code, json.dumps(obj, default=str).encode(), "application/json")
 
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) or b"{}"
+        path = self.path.split("?")[0]
+        if path == "/login":
+            import hmac
+            from urllib.parse import parse_qs
+            given = (parse_qs(raw.decode(errors="replace")).get("key") or [""])[0].strip()
+            if _access_key() and hmac.compare_digest(given, _access_key()):
+                return self._send(303, b"", "text/plain", {
+                    "Location": "/", "Set-Cookie": f"wp_key={given}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=604800"})
+            return self._login_page("That key did not match.")
+        if not self._authorized():
+            return self._json({"error": "access key required"}, 401)
         try:
-            body = json.loads(self.rfile.read(length) or b"{}")
+            body = json.loads(raw)
         except json.JSONDecodeError:
             return self._json({"error": "bad json"}, 400)
-        path = self.path.split("?")[0]
         if path == "/api/chat":
             text = str(body.get("text") or "").strip()[:2000]
             if text:
@@ -243,6 +277,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?")[0]
+        if path == "/health":
+            return self._json({"ok": True})
+        if not self._authorized():
+            if path.startswith("/api/"):
+                return self._json({"error": "access key required"}, 401)
+            if not path.startswith("/agents/"):
+                return self._login_page()
         if path == "/api/chat":
             from warmpath import chat as chat_mod
             return self._json({"messages": CHAT.messages(), "mode": mode(), "busy": chat_mod._busy.locked()})
@@ -255,9 +296,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             return self._send(200, json.dumps(state(), default=str).encode(), "application/json")
         if path.startswith("/api/run/"):
-            f = RUNS_DIR / f"{Path(path).name}.json"
-            if f.exists():
-                run = Run.load(f)
+            from warmpath import store
+            row = store.store().get("runs", Path(path).name)
+            if row:
+                run = Run.from_dict(row)
                 body = asdict(run) | {"violations": [asdict(v) | {"agent": v.agent} for v in audit.audit_run(run)]}
                 return self._send(200, json.dumps(body, default=str).encode(), "application/json")
             return self._send(404, b"{}", "application/json")
@@ -272,18 +314,31 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def serve(port: int = 8765) -> None:
+def serve(port: int | None = None) -> None:
+    """Locally: 127.0.0.1:8765. On a host (Render sets PORT): 0.0.0.0:$PORT, and only with an access key.
+
+    Exactly one process should run the heartbeat against a shared database. WARMPATH_AUTOPILOT_RUN=0
+    makes this process a console only - it still shows cards and takes approvals, because those
+    live in the database, while the deployed service does the watching.
+    """
+    import os
     global AUTOPILOT_REF
     from warmpath import autopilot
-    # A card still "pending" belongs to a worker that died with the previous process - nothing is
-    # waiting on it any more, so it must not keep a live-looking Send button.
-    for msg in CHAT.s.select("chat_messages", {"kind": "approval"}, order="id", desc=True, limit=50):
-        if (msg.get("payload") or {}).get("status") == "pending":
-            CHAT.update(msg["id"], status="expired")
-    AUTOPILOT_REF = autopilot.AUTOPILOT = autopilot.Autopilot(CHAT).start()
-    print(f"WarmPath console on http://localhost:{port} · autopilot every {AUTOPILOT_REF.interval_s}s · mode {mode()}")
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    port = port or int(os.environ.get("PORT", "8765"))
+    host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
+    if host != "127.0.0.1" and not _access_key():
+        raise SystemExit("Refusing to serve publicly without WARMPATH_ACCESS_KEY: this console can send email and post on LinkedIn.")
+    if os.environ.get("WARMPATH_AUTOPILOT_RUN", "1") == "1":
+        # A card still "pending" belongs to a worker that died with the previous process - nothing
+        # is waiting on it any more, so it must not keep a live-looking Send button.
+        for msg in CHAT.s.select("chat_messages", {"kind": "approval"}, order="id", desc=True, limit=50):
+            if (msg.get("payload") or {}).get("status") == "pending":
+                CHAT.update(msg["id"], status="expired")
+        AUTOPILOT_REF = autopilot.AUTOPILOT = autopilot.Autopilot(CHAT).start()
+    beat = f"every {AUTOPILOT_REF.interval_s}s" if AUTOPILOT_REF else "off (console only)"
+    print(f"WarmPath console on http://{host}:{port} · autopilot {beat} · mode {mode()}", flush=True)
+    ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
 if __name__ == "__main__":
-    serve(int(sys.argv[1]) if len(sys.argv) > 1 else 8765)
+    serve(int(sys.argv[1]) if len(sys.argv) > 1 else None)
