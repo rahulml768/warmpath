@@ -47,7 +47,7 @@ Rahul's message is between <data> tags. Choose exactly ONE action:
 Never invent a URL. If he wants a post scanned but gave no URL and did not ask for the demo,
 choose "none" and ask for the link.
 
-Return ONE JSON object: {"reply": "one or two plain sentences Alex says first",
+Return ONE JSON object: {"reply": "one short sentence Alex says first",
  "action": "grow" | "scan_post" | "check_replies" | "report" | "none", "source": "url, demo, or null",
  "goal": "what he wants, or null"}"""
 
@@ -248,13 +248,11 @@ def _run(chat: Chat, text: str) -> None:
         elif plan["action"] == "scan_post" and pilot:
             label = "the demo post" if plan["source"] == "demo" else "your post"
             pilot.watch(plan["source"], label)
-            chat.post("Alex", "text", f"I'm watching {label} now. Every {pilot.interval_s}s Quinn checks it for new "
-                                      "comments and the team takes it from there - you'll only hear from me when "
-                                      "something needs your approval." + ("" if pilot.enabled else
-                                      " Autopilot is paused, so turn it on in the sidebar."))
+            chat.post("Alex", "text", f"Watching {label} now - I'll ping you when something needs approval."
+                                      + ("" if pilot.enabled else " Autopilot is paused - turn it on in the sidebar."))
         elif plan["action"] == "check_replies" and pilot:
             pilot.poke()
-            chat.post("Alex", "text", "Morgan is checking the inbox now - replies are also checked on every heartbeat.")
+            chat.post("Alex", "text", "Morgan is checking replies now.")
         elif plan["action"] == "scan_post":
             _scan(chat, plan["source"])
         elif plan["action"] == "check_replies":
@@ -295,10 +293,9 @@ def _grow(chat: Chat, goal: str) -> None:
     post_id = (pub.data or {}).get("post_id") if pub else ""
     if post_id and pilot:
         pilot.watch(post_id, "your new post")
-        chat.post("Alex", "text", "It's live on LinkedIn. I'm watching it now - every comment goes through Quinn, "
-                                  "Jordan and Casey, and you'll only hear from me when something needs your approval.")
+        chat.post("Alex", "text", "Live on LinkedIn. Watching it for comments.")
     elif pub:
-        chat.post("Alex", "text", "Dry run: the post wasn't published, so there's nothing to watch yet.")
+        chat.post("Alex", "text", "Dry run - nothing published.")
 
 
 def _scan(chat: Chat, source: str) -> None:

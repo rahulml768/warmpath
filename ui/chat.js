@@ -80,7 +80,6 @@ function cardHtml(m) {
       return `<div class="card"><h4>${p.channel === "introduction" ? "Introduction request to your known contact" : p.channel === "email" ? "Email draft" : "LinkedIn reply draft"}
           ${p.passed ? `<span class="pill p-ok">every claim backed${p.attempts > 1 ? " · rewrote once" : ""}</span>` : '<span class="pill p-bad">claims failed · not sent</span>'}</h4>
         ${sentencesHtml(p)}
-        <div style="font-size:11.5px;color:var(--muted);margin-top:6px">Hover a tag to see the evidence behind each sentence.</div>
         ${(p.problems || []).length ? `<details><summary>${p.problems.length} problem(s) caught before you saw it</summary><ul>${p.problems.map(x => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}</div>`;
     case "approval": {
       const done = p.status && p.status !== "pending";
@@ -89,9 +88,9 @@ function cardHtml(m) {
       const isPost = p.run_kind === "post";
       const title = isPost ? `Publish this post on LinkedIn${p.page_author ? ` as ${esc(p.page_author)}` : ""}?` : "Send it?";
       return `<div class="card ${done ? "" : "approve"}"><h4>${title}</h4>
-        ${isPost ? `<div style="color:var(--body);font-size:13.5px;margin-bottom:10px">The preview above is exactly what goes out. It's public, so it waits for you.</div>`
+        ${isPost ? `<div style="color:var(--body);font-size:13.5px;margin-bottom:8px">Exactly what goes out. Public, so it waits for you.</div>`
                  : `<div class="slackcard">${slackMarkdown(p.card || "")}</div>`}
-        <div style="color:var(--soft);font-size:13px">Approve here, or reply <b>send</b> in the Slack card's thread. First answer wins; silence sends nothing.</div>
+        <div style="color:var(--soft);font-size:12.5px">Approve here or reply <b>send</b> in Slack.</div>
         ${done ? `<div class="btns"><span class="pill ${p.status === "approved" ? "p-ok" : "p-mute"}">${label}${p.via ? " · via " + esc(p.via) : ""}</span></div>`
                : `<div class="btns"><button class="btn primary" data-approve="send" data-run="${esc(p.run_id)}">${isPost ? "Publish" : "Send"}</button>
                    <button class="btn" data-approve="review" data-run="${esc(p.run_id)}">Review</button>
@@ -132,7 +131,6 @@ function cardHtml(m) {
               `<span class="cite" title="${esc((p.evidence || {})[id] || "missing evidence")}">${esc(id)}</span>`).join("")}</p>`).join("")}</div>
           <div class="li-bar"><span>👍 Like</span><span>💬 Comment</span><span>🔁 Repost</span><span>➤ Send</span></div>
         </div>
-        <div style="font-size:11.5px;color:var(--muted);margin-top:8px">Hover a tag to see the brief fact behind that sentence. Tags are not published.</div>
         ${(p.problems || []).length ? `<details><summary>${p.problems.length} problem(s) caught and rewritten before you saw it</summary><ul>${p.problems.map(x => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}</div>`;
     }
     case "offer": {

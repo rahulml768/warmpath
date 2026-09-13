@@ -61,7 +61,7 @@ evidence it relies on.
 
 Rules:
 - Respond to what they actually wrote in their comment. Plain, specific, no marketing words.
-- CHANNEL "email": 3-5 sentences. CHANNEL "linkedin_reply": 1-2 sentences, public, and since
+- CHANNEL "email": 2-3 short sentences. CHANNEL "linkedin_reply": 1 short sentence, public, and since
   we have no address for them, ask where to send details - never guess one.
 - If there is relationship evidence (kind "relationship"), you may mention that prior contact
   in the words the evidence uses, and cite it. Mark that sentence claims_prior_contact=true.
@@ -87,7 +87,7 @@ The founder's GOAL says what he wants. The EVIDENCE is his product brief: number
 They are the only facts you know about the product.
 
 Rules:
-- 5-8 short sentences, plain and specific, in the voice of the AUTHOR given: a person writes as "I",
+- 3 short lines at most: a hook, what it does, and an invitation to comment. Plain and specific, in the voice of the AUTHOR given: a person writes as "I",
   a company page writes as "we". No hashtags spam (at most 2), no emojis beyond one, no marketing
   superlatives.
 - Every sentence about what the product does cites the brief fact(s) it relies on and sets
