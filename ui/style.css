@@ -213,3 +213,13 @@ table.leads .person b { color: var(--ink); display: block }
 table.leads .person span { color: var(--muted); font-size: 12px }
 table.leads .said { color: var(--body); font-size: 12.5px; margin-top: 3px; max-width: 320px }
 .heartbeat { font-size: 10.5px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 6px; padding: 0 6px }
+
+/* ── Jordan's relationship memory card ───────────────────────────────────── */
+.mem .mem-h { margin: 12px 0 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted) }
+.mem .mem-h:first-of-type { margin-top: 4px }
+.mem-step { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; color: var(--body); padding: 3px 0 }
+.mem-k { width: 72px; flex: none; color: var(--muted); font-size: 12.5px }
+.tl { display: grid; grid-template-columns: 150px 1fr auto; gap: 10px; align-items: baseline; font-size: 13px; padding: 5px 10px; border-left: 3px solid var(--violet); background: #FAFAFA; border-radius: 0 8px 8px 0; margin: 4px 0 }
+.tl-k { color: var(--soft); white-space: nowrap } .tl-s { color: var(--ink); min-width: 0; overflow-wrap: anywhere } .tl-d { color: var(--muted); font-size: 12px; white-space: nowrap }
+.mem-why { font-size: 13px; color: var(--body); margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center }
+@media (max-width: 900px) { .tl { grid-template-columns: 1fr } .mem-k { width: auto } }

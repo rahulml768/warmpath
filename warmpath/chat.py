@@ -107,11 +107,19 @@ def cards_so_far(chat: Chat, run: Run, comment: dict, sent: set[str]) -> None:
         sent.add("jordan")
         i, r = ident.data or {}, rel.data or {}
         col = _step(run, "relationship.collision")
+        mem = _step(run, "memory.check")
+        mdata = (mem.data or {}) if mem else {}
         chat.post("Jordan", "relationship", run_id=run.run_id, name=i.get("name"), company=i.get("company"),
                   domain=i.get("domain"), domain_source=i.get("domain_source"), email=i.get("email"),
                   email_source=i.get("email_source"), verified=i.get("verified"),
+                  network=i.get("network_distance", ""),
                   shared=i.get("shared_mailbox"), warm=rel.decision == "warm", people=r.get("people", []),
                   weak=r.get("weak", 0), refused=r.get("refused"),
+                  timeline=r.get("timeline", []), records_found=r.get("records_found", 0),
+                  desks_ignored=r.get("desks_ignored", 0),
+                  memory=[{k: m.get(k) for k in ("scope", "kind", "text", "source", "expires", "inferred")}
+                          for m in mdata.get("records", [])],
+                  holds=[h.get("text") for h in mdata.get("holds", [])],
                   collisions=(col.data or {}).get("collisions", []) if col else [])
     checks = [s for s in run.steps if s.tool == "claims.check"]
     if checks and "casey" not in sent:

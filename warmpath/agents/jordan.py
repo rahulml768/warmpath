@@ -85,6 +85,7 @@ def resolve_identity(run: Run, comment: dict, contacts: list[dict], ours: set[st
              "email": email if verified else "", "email_source": source if verified else "",
              "verified": verified, "verify_evidence": evidence,
              "shared_mailbox": bool(email) and is_role_mailbox(email),
+             "network_distance": profile.get("network_distance", ""),
              "profile_url": comment.get("profile_url", "")}
     run.record("identity.resolve", agent=NAME, decision="verified" if verified else "no_address",
                data={**ident, "address": ident["email"]})
@@ -125,11 +126,18 @@ def relationship(run: Run, ident: dict, contacts: list[dict], ours: set[str]) ->
     rel = {"domain": domain, "refused": found["refused"], "warm": bool(usable),
            "people": usable, "weak": [p for p in found["people"] if p not in usable],
            "records": len(records)}
+    # What the founder sees on Jordan's card: the actual interactions behind "warm", newest first -
+    # a relationship claim they can check, not a score they have to trust.
+    timeline = sorted(({"at": r.get("at", ""), "channel": r["channel"], "subject": r.get("subject", ""),
+                        "with": r["address"]}
+                       for p in usable for i in p["evidence_ids"] for r in [by_id.get(i)] if r),
+                      key=lambda t: t["at"] or "", reverse=True)[:6]
     run.record("relationship.resolve", agent=NAME, decision="warm" if usable else "cold",
                data={"domain": domain, "refused": found["refused"],
-                     "people": [{k: p[k] for k in ("name", "email", "via", "label", "score",
-                                                   "evidence", "evidence_ids")} for p in usable],
-                     "weak": len(rel["weak"])})
+                     "people": [{k: p.get(k) for k in ("name", "email", "via", "label", "score", "mutual",
+                                                       "evidence", "evidence_ids", "last_subject")} for p in usable],
+                     "weak": len(rel["weak"]), "timeline": timeline, "records_found": len(records),
+                     "desks_ignored": len({r["address"] for r in records if is_role_mailbox(r["address"])})})
     return rel
 
 

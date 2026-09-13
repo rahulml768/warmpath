@@ -33,16 +33,38 @@ function cardHtml(m) {
     }
     case "relationship": {
       const warm = (p.people || [])[0];
-      return `<div class="card"><h4>${p.warm ? "You already know this company" : "No prior relationship"}
+      const kind = {inbound: "↘ they wrote to you", outbound: "↗ you wrote to them", meeting: "📅 you met"};
+      const when = s => { const d = new Date(s); return isNaN(d) ? "" : d.toLocaleDateString(undefined, {day: "numeric", month: "short", year: "numeric"}); };
+      const network = {FIRST_DEGREE: "1st-degree connection", SECOND_DEGREE: "2nd-degree", THIRD_DEGREE: "3rd-degree", OUT_OF_NETWORK: "not connected"}[p.network] || "";
+      const step = (label, value, source) => `<div class="mem-step"><span class="mem-k">${label}</span><span>${value}</span>${source ? `<span class="pill p-mute">${esc(source)}</span>` : ""}</div>`;
+      const notUsed = [
+        p.weak ? `${p.weak} one-way or stale contact(s) - one-way isn't a relationship` : "",
+        p.desks_ignored ? `${p.desks_ignored} shared inbox(es) like hr@ or sales@ - a desk isn't a person` : "",
+        p.refused ? esc(p.refused) : "",
+        ...(p.collisions || []).map(c => `name trap: ${esc(c)}`),
+        "Company matched by domain, never by name",
+      ].filter(Boolean);
+      return `<div class="card mem"><h4>${p.warm ? "You already know this company" : "No prior relationship"}
           ${p.warm ? '<span class="pill p-acc">warm account</span>' : '<span class="pill p-mute">cold lead</span>'}</h4>
-        <div class="kv">
-          <div>Company</div><div>${esc(p.company || "unknown")}${p.domain ? ` · <b>${esc(p.domain)}</b> <span style="color:var(--muted)">from ${esc(p.domain_source)}</span>` : ""}</div>
-          <div>Address</div><div>${p.verified ? `${esc(p.email)} <span class="pill p-ok">from ${esc(p.email_source)}</span>` : `<span class="pill p-warn">none verified</span> I won't guess one, so Quinn replies on LinkedIn`}</div>
-          ${warm ? `<div>You know</div><div><b>${esc(warm.name || warm.email)}</b> · ${esc(warm.email)}<br>${esc(warm.evidence)} <span class="pill p-acc">${esc(warm.label)} · by ${esc(warm.via)}</span></div>` : ""}
-          ${p.weak ? `<div>Not used</div><div>${p.weak} one-way or stale contact(s)</div>` : ""}
-          ${p.refused ? `<div>Refused</div><div>${esc(p.refused)}</div>` : ""}
-          ${(p.collisions || []).length ? `<div>Name trap</div><div style="color:var(--warn)">${p.collisions.map(esc).join("<br>")}</div>` : ""}
-        </div></div>`;
+
+        <div class="mem-h">How I know who this is</div>
+        ${step("LinkedIn", `${esc(p.name || "")}${network ? ` · ${network}` : ""}`, "")}
+        ${step("Email", p.verified ? `<b>${esc(p.email)}</b>` : `<span class="pill p-warn">none verified</span> I won't guess one`, p.verified ? p.email_source : "")}
+        ${step("Company", p.domain ? `${esc(p.company || "")} · <b>${esc(p.domain)}</b>` : esc(p.company || "unknown"), p.domain ? p.domain_source : "")}
+
+        <div class="mem-h">Your history with ${esc(p.domain || "them")}</div>
+        ${warm ? `${(p.timeline || []).map(t => `<div class="tl"><span class="tl-k">${kind[t.channel] || esc(t.channel)}</span><span class="tl-s">${esc(t.subject || "(no subject)")}</span><span class="tl-d">${when(t.at)}</span></div>`).join("")}
+            <div class="mem-why"><b>${esc(warm.name || warm.email)}</b> · ${esc(warm.evidence)} · <span class="pill p-acc">${esc(warm.label)}</span>
+            ${warm.mutual ? "<span class=\"pill p-ok\">two-way, so it counts</span>" : ""}</div>`
+          : `<div class="mem-why">Searched Gmail and Calendar${p.domain ? ` for ${esc(p.domain)}` : ""}: ${p.records_found || 0} message(s), no two-way contact. Casey will write cold and never imply you've spoken.</div>`}
+
+        <div class="mem-h">Account memory</div>
+        ${(p.holds || []).length ? p.holds.map(h => `<div class="viol">Hold: ${esc(h)}</div>`).join("") : ""}
+        ${(p.memory || []).length ? p.memory.map(m => `<div class="mem-step"><span class="pill p-acc">${esc((m.kind || "").replaceAll("_", " "))}</span><span>${esc(m.text)}</span><span class="pill p-mute">${esc(m.scope)} · ${esc(m.source)}</span></div>`).join("")
+          : `<div class="mem-why">No do-not-contact rule, follow-up hold or note for this person or company.</div>`}
+
+        <details><summary>Not used, and why</summary><ul>${notUsed.map(x => `<li>${x}</li>`).join("")}</ul></details>
+      </div>`;
     }
     case "draft":
       return `<div class="card"><h4>${p.channel === "introduction" ? "Introduction request to your known contact" : p.channel === "email" ? "Email draft" : "LinkedIn reply draft"}
