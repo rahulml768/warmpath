@@ -72,8 +72,8 @@ def resolve_identity(run: Run, comment: dict, contacts: list[dict], ours: set[st
     verified, evidence = verify_contact(email, sources)
     source = next((n for n, t in sources.items() if email and email in (t or "").lower()), "")
 
-    # A verified work address is evidence of where someone works: rahul@ascot.ws is reached at
-    # ascot.ws. Used only when LinkedIn gave no company website, and never for free mail, shared
+    # A verified work address is evidence of where someone works: someone@company.example is reached at
+    # company.example. Used only when LinkedIn gave no company website, and never for free mail, shared
     # desks or our own domains - the same rules that keep a warm path honest. Never the reverse:
     # a company name is still never turned into a domain ("Ascot" names ten unrelated companies).
     if not domain and verified and is_company_domain(email, ours) and not is_role_mailbox(email):
