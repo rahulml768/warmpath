@@ -59,11 +59,13 @@ def gmail_via_composio() -> bool:
     return composio_ready() and os.environ.get("GMAIL_VIA_COMPOSIO", "0") == "1"
 
 
-def _composio(tool: str, arguments: dict) -> dict:
-    user = os.environ.get("COMPOSIO_USER_ID", "").strip()
+def _composio(tool: str, arguments: dict, *, user_id: str = "", account_id: str = "") -> dict:
+    user = user_id or os.environ.get("COMPOSIO_USER_ID", "").strip()
     if not user:
         raise NotConnected("COMPOSIO_USER_ID is not set - connect Gmail/Calendar in Composio")
     body = {"arguments": arguments, "user_id": user}
+    if account_id:
+        body["connected_account_id"] = account_id
     if os.environ.get("COMPOSIO_TOOL_VERSION"):
         body["version"] = os.environ["COMPOSIO_TOOL_VERSION"]
     req = urllib.request.Request(
@@ -179,6 +181,27 @@ def send(*, to: str, subject: str, body: str, live: bool) -> dict:
     if not live:
         return {"simulated": True, "to": to, "subject": subject}
     guard_live_recipients([to])
+    # Sending over HTTPS through a Composio Gmail connection. Some hosts block outbound SMTP entirely
+    # (Render's free tier answers "Network is unreachable" on port 465), and reading over IMAP still works.
+    send_user = os.environ.get("COMPOSIO_GMAIL_USER_ID", "").strip()
+    if os.environ.get("GMAIL_SEND_VIA", "").strip() == "composio" and send_user:
+        args = {"recipient_email": to, "subject": subject, "body": body}
+        name = os.environ.get("WARMPATH_SENDER_NAME", "").strip()
+        sender = os.environ.get("GMAIL_USER", "").strip()
+        if name and sender:
+            args["from_email"] = f"{name} <{sender}>"
+        try:
+            d = _composio("GMAIL_SEND_EMAIL", args, user_id=send_user,
+                          account_id=os.environ.get("COMPOSIO_GMAIL_ACCOUNT_ID", "").strip())
+        except RuntimeError as exc:
+            if "from_email" not in args or "from" not in str(exc).lower():
+                raise
+            args.pop("from_email")               # the provider refused the display name: send without it
+            d = _composio("GMAIL_SEND_EMAIL", args, user_id=send_user,
+                          account_id=os.environ.get("COMPOSIO_GMAIL_ACCOUNT_ID", "").strip())
+        rd = d.get("response_data") if isinstance(d.get("response_data"), dict) else d
+        return {"simulated": False, "to": to, "subject": subject, "via": "composio",
+                "message_id": rd.get("id", ""), "thread_id": rd.get("threadId", "")}
     if gmail_via_composio():
         d = _composio("GMAIL_SEND_EMAIL", {"recipient_email": to, "subject": subject, "body": body})
         return {"simulated": False, "to": to, "subject": subject,
