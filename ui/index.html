@@ -60,6 +60,18 @@
       <header class="page-head"><div><h1>Leads</h1><p>Everyone who commented, where they are, and what happens next. Autopilot keeps this moving on its own; you only step in to approve.</p></div>
         <button class="btn" id="tick-now">Check now</button></header>
       <div class="stats" id="lead-stats"></div>
+      <details class="panel" style="padding:16px;margin-bottom:16px"><summary>Identity review and recovery</summary><div id="operations"></div></details>
+      <details class="panel" style="padding:16px;margin-bottom:16px"><summary>Account and contact memory</summary>
+        <p>Restrictions are checked before outreach. Archive a record to correct it, then add its replacement. Follow-up dates release a hold; sending still requires approval.</p>
+        <form id="memory-form" class="btns">
+          <select name="scope" aria-label="Scope"><option value="contact">Contact</option><option value="account">Company</option><option value="founder">Founder preference</option></select>
+          <input name="target" required placeholder="Email, LinkedIn URL, or company domain" aria-label="Memory target">
+          <select name="kind" aria-label="Memory type"><option value="do_not_contact">Do not contact</option><option value="follow_up">Follow up after date</option><option value="active_conversation">Conversation active</option><option value="relationship">Relationship note</option><option value="preference">Writing preference</option></select>
+          <input name="text" required placeholder="Fact or instruction and why" aria-label="Memory fact">
+          <input name="expires" type="datetime-local" aria-label="Expiry or follow-up date">
+          <button class="btn" type="submit">Save memory</button>
+        </form><div id="memory-records"></div>
+      </details>
       <div class="panel table-wrap"><table class="leads"><thead><tr><th>Person</th><th>Company</th><th>Relationship</th><th>Stage</th><th>Meeting</th><th>Last activity</th></tr></thead><tbody id="leads"></tbody></table></div>
     </section>
 

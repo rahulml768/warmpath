@@ -71,6 +71,14 @@ class StoreError(RuntimeError):
     pass
 
 
+class ClosingConnection(sqlite3.Connection):
+    def __exit__(self, *args):
+        try:
+            return super().__exit__(*args)
+        finally:
+            self.close()
+
+
 class SQLiteStore:
     backend = "sqlite"
 
@@ -81,7 +89,7 @@ class SQLiteStore:
             db.executescript(SQLITE_SCHEMA)
 
     def _conn(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.path, timeout=15)
+        db = sqlite3.connect(self.path, timeout=15, factory=ClosingConnection)
         db.row_factory = sqlite3.Row
         return db
 
@@ -181,9 +189,7 @@ class SQLiteStore:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT status, run_id, updated FROM action_ledger WHERE action_id=?",
                              (action_id,)).fetchone()
-            busy_elsewhere = (row and row["status"] == "pending" and row["run_id"] != run_id and row["updated"]
-                              and (datetime.now(timezone.utc) - datetime.fromisoformat(row["updated"])).total_seconds() < 600)
-            if row and (row["status"] == "done" or busy_elsewhere):
+            if row and row["status"] != "failed":
                 db.execute("UPDATE action_ledger SET attempts=attempts+1, updated=? WHERE action_id=?", (now(), action_id))
                 db.execute("COMMIT")
                 return False
@@ -199,25 +205,58 @@ class SupabaseStore:
 
     def __init__(self, url: str, key: str):
         self.base = url.rstrip("/") + "/rest/v1"
-        self.headers = {"apikey": key, "Content-Type": "application/json", "User-Agent": "warmpath/0.1"}
+        self.host = urllib.parse.urlparse(url).netloc
+        self.headers = {"apikey": key, "Content-Type": "application/json", "User-Agent": "warmpath/0.1",
+                        "Connection": "keep-alive"}
         # New-style secret keys (sb_secret_...) go in the apikey header only; legacy service_role
         # keys are JWTs and are also sent as the bearer token.
         if not key.startswith("sb_"):
             self.headers["Authorization"] = f"Bearer {key}"
+        self._local = threading.local()
+
+    def _connection(self):
+        """One kept-alive HTTPS connection per thread.
+
+        Opening a fresh TLS connection per query is what took the console down on Windows
+        (WinError 10055): a dashboard polling a few endpoints made thousands of short-lived sockets
+        a minute, each lingering in TIME_WAIT, until the OS refused to open more.
+        """
+        import http.client
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = http.client.HTTPSConnection(self.host, timeout=30)
+            self._local.conn = conn
+        return conn
 
     def _req(self, method: str, path: str, *, params: dict | None = None, body=None, prefer: str = "") -> list | dict | None:
-        url = f"{self.base}/{path}" + ("?" + urllib.parse.urlencode(params, safe=",.()*:") if params else "")
+        import http.client
+        target = f"/rest/v1/{path}" + ("?" + urllib.parse.urlencode(params, safe=",.()*:") if params else "")
         headers = dict(self.headers)
         if prefer:
             headers["Prefer"] = prefer
         data = json.dumps(body, default=str).encode() if body is not None else None
-        req = urllib.request.Request(url, data=data, method=method, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                raw = r.read()
-        except urllib.error.HTTPError as exc:
-            raise StoreError(f"supabase {method} {path}: HTTP {exc.code} {exc.read().decode(errors='replace')[:300]}") from exc
-        return json.loads(raw) if raw else None
+        for attempt in (1, 2):
+            conn = self._connection()
+            try:
+                conn.request(method, target, body=data, headers=headers)
+                resp = conn.getresponse()
+                raw = resp.read()
+            except (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError, http.client.CannotSendRequest) as exc:
+                # A kept-alive connection the server already closed: the request never reached it,
+                # so one retry on a fresh connection is safe.
+                conn.close()
+                self._local.conn = None
+                if attempt == 2:
+                    raise StoreError(f"supabase {method} {path}: {type(exc).__name__}: {exc}") from exc
+                continue
+            except (OSError, http.client.HTTPException) as exc:
+                conn.close()
+                self._local.conn = None
+                raise StoreError(f"supabase {method} {path}: {type(exc).__name__}: {exc}") from exc
+            if resp.status >= 400:
+                raise StoreError(f"supabase {method} {path}: HTTP {resp.status} {raw.decode(errors='replace')[:300]}")
+            return json.loads(raw) if raw else None
+        return None
 
     @staticmethod
     def _filters(where: dict | None) -> dict:

@@ -129,7 +129,8 @@ def _mail_composio(terms: list[str], years: int) -> list[dict]:
 
 
 def _imap() -> imaplib.IMAP4_SSL:
-    box = imaplib.IMAP4_SSL("imap.gmail.com")
+    # A mailbox that stops answering must fail this call, not hang it: the heartbeat waits on it.
+    box = imaplib.IMAP4_SSL("imap.gmail.com", timeout=int(os.environ.get("WARMPATH_IMAP_TIMEOUT_S", "25")))
     box.login(os.environ["GMAIL_USER"], os.environ["GMAIL_APP_PASSWORD"])
     return box
 

@@ -94,8 +94,13 @@ def read_reply(run: Run, reply: dict, offered: dict[str, dict]) -> dict:
 
 def agreed_time(m: dict, offered: dict[str, dict]) -> tuple[str, str]:
     """(start_local, "") when the time is settled, else ("", reason for a human)."""
+    if m.get("ambiguous", True):
+        return "", "their acceptance is ambiguous; ask for clarification"
     if m["offered_slot_id"]:
-        return offered[m["offered_slot_id"]]["start_local"], ""
+        slot = offered.get(m["offered_slot_id"])
+        if not slot:
+            return "", "they selected an unknown slot"
+        return slot["start_local"], ""
     if not (m["day_key"] and m["time_24h"]):
         return "", "they want to meet but did not accept a specific day and time"
     if not m["timezone_stated"]:
@@ -113,7 +118,9 @@ def slot_is_free(run: Run, start_local: str) -> tuple[bool, bool]:
     start = datetime.fromisoformat(start_local).replace(tzinfo=zone)
     free = run.step("calendar.check", lambda: google.free_slots(
         start=start, end=start + timedelta(minutes=30), tz=tz()), agent=NAME)
-    ok = bool(free)
+    ok = any(datetime.fromisoformat(f["start"].replace("Z", "+00:00")) <= start
+             and start + timedelta(minutes=30) <= datetime.fromisoformat(f["end"].replace("Z", "+00:00"))
+             for f in free)
     run.steps[-1].decision = "free" if ok else "busy"
     return ok, True
 

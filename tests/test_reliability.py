@@ -152,6 +152,8 @@ class Stubs:
     def __init__(self, monkeypatch, *, intent=LEAD, confidence=0.92, records=(), draft=None,
                  meeting=None):
         self.sent = []
+        # These scenarios exercise the direct outreach route; introductions have their own suite.
+        monkeypatch.setenv("WARMPATH_INTRODUCTIONS", "0")
         monkeypatch.setattr(llm, "classify", lambda text, **k: {
             "intent": intent, "confidence": confidence, "signals": [], "ungrounded_signals": 0})
         monkeypatch.setattr(google, "mail_evidence", lambda d, a=(), years=3: list(records))

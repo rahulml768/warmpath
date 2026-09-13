@@ -27,6 +27,12 @@ services:
         sync: false
       - key: DEEPSEEK_API_KEY
         sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: CEREBRAS_MODEL
+        value: gpt-oss-120b
+      - key: WARMPATH_LLM_PRIMARY
+        value: deepseek
       - key: SLACK_BOT_TOKEN
         sync: false
       - key: SLACK_APPROVER_ID

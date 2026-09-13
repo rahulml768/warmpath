@@ -11,7 +11,7 @@ import os
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from . import claims
+from . import claims, memory, recovery
 from .agents import casey, jordan, morgan, quinn
 from .core import Leads, Ledger, Run, action_id, evaluate, mode
 from .integrations import slack
@@ -57,7 +57,7 @@ def _card(run: Run, comment: dict, ident: dict, rel: dict, cls: dict, channel: s
     return "\n".join(lines)
 
 
-LEAD_STAGE = {"AWAITING_REPLY": "Emailed · waiting for reply", "COMMENT_REPLIED": "Replied on LinkedIn",
+LEAD_STAGE = {"AWAITING_INTRO": "Introduction requested", "AWAITING_REPLY": "Emailed · waiting for reply", "COMMENT_REPLIED": "Replied on LinkedIn",
               "IGNORED": "Not a lead", "BLOCKED": "Blocked", "REVIEW_REQUIRED": "Needs you", "STOPPED": "Stopped"}
 REPLY_STAGE = {"AWAITING_REPLY": "Times offered · waiting", "NOTIFIED": "Meeting booked",
                "IGNORED": "Not interested", "REVIEW_REQUIRED": "Needs you",
@@ -96,7 +96,7 @@ def process_goal(goal: str, *, approver: Approver, ledger: Ledger | None = None)
     try:
         res = quinn.publish_post(run, text, live)
     except Exception as exc:  # noqa: BLE001
-        ledger.failed(key, str(exc))
+        recovery.record(ledger, run, key, "post", exc, retryable=not live)
         run.move("STOPPED")
         return run.finish("STOPPED", "SEND_FAILED", [str(exc)[:200]])
     run.steps[-1].decision = "published"
@@ -116,23 +116,36 @@ def process_comment(comment: dict, *, post_text: str, approver: Approver, contac
                     ours: set[str] | None = None) -> Run:
     """One comment through the team - and a row in the leads table for the person, whatever happened."""
     leads = leads or Leads()
+    from .replay import capture
+    snapshot = capture(leads, 'comment', dict(comment=comment, post_text=post_text, contacts=contacts,
+                       rubric=rubric, ours=list(ours if ours is not None else _our_domains())))
     run = _process_comment(comment, post_text=post_text, approver=approver, contacts=contacts,
                            ledger=ledger, leads=leads, rubric=rubric, ours=ours)
-    if run.state != "BLOCKED_DUPLICATE":
+    run.record('replay.input', data=snapshot)
+    if run.state != "BLOCKED_DUPLICATE" and run.reason_code != "IDENTITY_CONFLICT":
         cls, _ = _step_data(run, "intent.classify")
         _, ident = _step_data(run, "identity.resolve")
         rel, rdata = _step_data(run, "relationship.resolve")
         people = rdata.get("people") or []
         key = ident.get("email") or f"comment:{comment['comment_id']}"
+        person_id = (_step_data(run, 'identity.canonical')[1]).get('id')
+        previous = [row for row in leads.all() if person_id and row.get('person_id') == person_id and row['key'] != key]
+        for row in previous:
+            leads.save(key, {**row, **(leads.get(key) or {}), 'key': key})
         leads.save(key, {
             "email": ident.get("email") or None, "name": comment.get("author_name", ""),
             "company": ident.get("company", ""), "domain": ident.get("domain", ""),
             "comment": comment.get("text", ""), "comment_id": comment["comment_id"],
+            "profile_url": comment.get("profile_url", ""), "author_id": comment.get("author_id", ""),
+            "memory_mode": run.mode,
+            "person_id": (_step_data(run, "identity.canonical")[1]).get("id"),
             "intent": cls.decision if cls else None, "confidence": cls.confidence if cls else None,
             "warm": bool(rel and rel.decision == "warm"),
             "knows": (people[0].get("name") or people[0].get("email")) if people else "",
             "stage": LEAD_STAGE.get(run.state, run.state), "lead_run": run.run_id,
             "status": (leads.get(key) or {}).get("status") or ("awaiting_reply" if run.state == "AWAITING_REPLY" else run.state.lower())})
+        for row in previous:
+            leads.s.delete('leads', {'key': row['key']})
     return run
 
 
@@ -143,10 +156,21 @@ def _process_comment(comment: dict, *, post_text: str, approver: Approver, conta
     ours = ours if ours is not None else _our_domains()
     live = mode() == "live"
     run = Run.start(comment["comment_id"], subject=comment.get("author_name", ""))
+    memory.capture_opt_out(leads.s, comment, comment.get("text", ""),
+                           f"comment:{comment['comment_id']}", run.mode)
+    held = memory.check(run, leads, comment)
+    if held:
+        run.move("BLOCKED")
+        return run.finish(run.state, "MEMORY_HOLD", held)
 
     # ── Quinn: is this buying intent? ──────────────────────────────────────────
     cls = quinn.classify(run, comment, post_text, rubric)
     run.move("CLASSIFIED")
+    if cls["intent"] == "OPT_OUT":
+        for identity in memory.identities(comment):
+            memory.Memory(leads.s, run.mode).remember(scope="contact", target=identity,
+                kind="do_not_contact", text=comment.get("text", "Opt-out"),
+                source=f"comment:{comment['comment_id']}", inferred=True)
     gate = evaluate(intent=cls["intent"], confidence=cls["confidence"], verified=True,
                     verify_evidence=[], shared_mailbox=False, approved=None)
     if not gate.allowed:
@@ -159,12 +183,34 @@ def _process_comment(comment: dict, *, post_text: str, approver: Approver, conta
     # ── Jordan: who, which company, do we know them ────────────────────────────
     ident = jordan.resolve_identity(run, comment, contacts, ours)
     run.move("IDENTITY_RESOLVED")
+    from . import entities
+    person, conflict = entities.resolve(run, leads, ident, comment)
+    if conflict:
+        run.move("REVIEW_REQUIRED")
+        return run.finish(run.state, "IDENTITY_CONFLICT", [conflict])
+    ident['person_id'] = person['id']
+    held = memory.check(run, leads, {**comment, **ident})
+    if held:
+        run.move("BLOCKED")
+        return run.finish(run.state, "MEMORY_HOLD", held)
     rel = jordan.relationship(run, ident, contacts, ours)
     collisions = jordan.company_name_collision(ident, contacts)
     if collisions:
         run.record("relationship.collision", agent=jordan.NAME, decision="not_used",
                    data={"collisions": collisions})
     run.move("RELATIONSHIP_RESOLVED")
+
+    from . import introductions
+    connector = introductions.connector_for(ident, rel)
+    lead_key = ident.get("email") or f"comment:{comment['comment_id']}"
+    existing = leads.get(lead_key) or {}
+    prior_intro = existing.get("introduction") or {}
+    if prior_intro and not (prior_intro.get("status") == "simulated" and run.mode == "live"):
+        run.move("ACTION_PROPOSED")
+        run.move("BLOCKED_DUPLICATE")
+        return run.finish(run.state, "INTRO_ALREADY_STARTED", ["Review the existing introduction before starting another outreach."])
+    if connector and not existing.get("sent_at") and os.environ.get("WARMPATH_INTRODUCTIONS", "1") == "1":
+        return introductions.request(run, comment, ident, connector, approver=approver, ledger=ledger, leads=leads)
 
     # An unverified or shared address is not a reason to stop - it is a reason not to email.
     channel = "email" if ident["verified"] and not ident["shared_mailbox"] else "linkedin_reply"
@@ -178,6 +224,7 @@ def _process_comment(comment: dict, *, post_text: str, approver: Approver, conta
     # private, so it never reaches a public reply - only the email may use it.
     evidence = casey.evidence_for(comment, ident, rel if channel == "email" else {**rel, "people": []},
                                   post_text=post_text)
+    evidence.update(memory.preferences(leads, run, {**comment, **ident}))
     allowed = {ident["email"]} if ident["verified"] else set()
     draft, problems = casey.write(run, channel=channel, comment=comment, evidence=evidence,
                                   allowed=allowed)
@@ -211,6 +258,10 @@ def _process_comment(comment: dict, *, post_text: str, approver: Approver, conta
     run.move("APPROVED")
 
     # ── the one external write, through the ledger ─────────────────────────────
+    held = memory.check(run, leads, {**comment, **ident}, active=True)
+    if held:
+        run.move("STOPPED")
+        return run.finish(run.state, "MEMORY_HOLD", held)
     if not ledger.begin(key, run.run_id, "send" if channel == "email" else "reply"):
         run.record("ledger.check", agent=NAME, decision="already_executed", data={"action_id": key})
         run.move("BLOCKED_DUPLICATE")
@@ -222,7 +273,7 @@ def _process_comment(comment: dict, *, post_text: str, approver: Approver, conta
         else:
             res = quinn.reply_on_linkedin(run, comment, " ".join(s["text"] for s in draft["sentences"]), live)
     except Exception as exc:  # noqa: BLE001
-        ledger.failed(key, str(exc))
+        recovery.record(ledger, run, key, "send", exc, retryable=not live)
         run.move("STOPPED")
         return run.finish("STOPPED", "SEND_FAILED", [str(exc)[:200]])
     run.steps[-1].decision = "sent"
@@ -248,7 +299,10 @@ def process_reply(lead: dict, reply: dict, *, approver: Approver, notify: Notifi
                   ledger: Ledger | None = None, leads: Leads | None = None) -> Run:
     """One reply through Morgan - and the person's stage in the leads table moves with it."""
     leads = leads or Leads()
+    from .replay import capture
+    snapshot = capture(leads, 'reply', dict(lead=lead, reply=reply))
     run = _process_reply(lead, reply, approver=approver, notify=notify, ledger=ledger, leads=leads)
+    run.record('replay.input', data=snapshot)
     if run.state != "BLOCKED_DUPLICATE":
         leads.save(lead["email"], {"stage": REPLY_STAGE.get(run.state, run.state)})
     return run
@@ -261,6 +315,9 @@ def _process_reply(lead: dict, reply: dict, *, approver: Approver, notify: Notif
     meet_key = action_id("meeting", lead["email"])
     reply_key = action_id("replyread", reply["message_id"])
     lead = leads.get(lead["email"]) or lead
+    from .integrations import google
+    memory.capture_opt_out(leads.s, lead, google._strip_quoted(reply.get("body", "")),
+                           f"reply:{reply['message_id']}")
 
     # ── resume, never restart ──────────────────────────────────────────────────
     pending = lead.get("pending_booking")
@@ -283,6 +340,11 @@ def _process_reply(lead: dict, reply: dict, *, approver: Approver, notify: Notif
                           ["this reply was already handled or the meeting already exists"])
 
     offered = lead.get("offered") or {}
+    held = memory.check(run, leads, lead)
+    if held:
+        run.move("MEETING_READ")
+        run.move("REVIEW_REQUIRED")
+        return run.finish(run.state, "MEMORY_HOLD", held)
     m = morgan.read_reply(run, reply, offered)
     run.move("MEETING_READ")
     if m["wants_meeting"] == "no":
@@ -295,6 +357,14 @@ def _process_reply(lead: dict, reply: dict, *, approver: Approver, notify: Notif
         return run.finish("REVIEW_REQUIRED", "MEETING_INTENT_UNCLEAR", [f"reply: \"{reply['body'][:120]}\""])
 
     start_local, why = morgan.agreed_time(m, offered)
+    # Ambiguity blocks a BOOKING, not a conversation. "Tuesday 11 works" with no clear Tuesday must
+    # go to a human before anything lands on a calendar; "not this week, next week?" names no time
+    # at all, so the model calls it ambiguous - and the right move is to offer real times, which
+    # still wait for the founder's approval.
+    trying_to_book = bool(m.get("offered_slot_id")) or bool(m.get("day_key") and m.get("time_24h"))
+    if trying_to_book and (m.get("ambiguous", True) or (m.get("offered_slot_id") and not start_local)):
+        run.move("REVIEW_REQUIRED")
+        return run.finish("REVIEW_REQUIRED", "TIME_NOT_AGREED", [why])
     if not start_local and not (m["day_key"] and m["time_24h"]):
         # They want to meet but haven't settled a time - "next week", "Tuesday works", or no
         # hint at all. Offer real free times inside whatever window they gave.
@@ -315,6 +385,20 @@ def _process_reply(lead: dict, reply: dict, *, approver: Approver, notify: Notif
 
 def _book(run: Run, lead: dict, start_local: str, ledger: Ledger, leads: Leads, notify: Notifier,
           live: bool, meet_key: str, reply_key: str) -> Run:
+    if live:
+        from .integrations import google
+        if not google.composio_ready():
+            run.move("REVIEW_REQUIRED")
+            return run.finish(run.state, "CALENDAR_UNCHECKED", ["Connect the calendar before booking."])
+    if run.state == "CALENDAR_FAILED":
+        free, checked = morgan.slot_is_free(run, start_local)
+        if not free or live and not checked:
+            run.move("REVIEW_REQUIRED")
+            return run.finish(run.state, "SLOT_TAKEN", ["The previously accepted time is no longer available."])
+    held = memory.check(run, leads, lead)
+    if held:
+        run.move("REVIEW_REQUIRED")
+        return run.finish(run.state, "MEMORY_HOLD", held)
     if not ledger.begin(meet_key, run.run_id, "meeting"):
         run.record("ledger.check", agent=NAME, decision="already_executed", data={"action_id": meet_key})
         run.move("BLOCKED_DUPLICATE")
@@ -325,7 +409,8 @@ def _book(run: Run, lead: dict, start_local: str, ledger: Ledger, leads: Leads, 
         ev = morgan.book(run, title=title, start_local=start_local, attendee=lead["email"],
                          description=f"From a LinkedIn comment. WarmPath run {run.run_id}.", live=live)
     except Exception as exc:  # noqa: BLE001
-        ledger.failed(meet_key, str(exc))
+        recovery.record(ledger, run, meet_key, "meeting", exc, retryable=not live,
+                        payload={"lead_key": lead['email'], "start_local": start_local})
         run.move("CALENDAR_FAILED")
         return run.finish("CALENDAR_FAILED", "CALENDAR_WRITE_FAILED",
                           [str(exc)[:200], f"agreed time kept: {start_local}",
@@ -333,6 +418,7 @@ def _book(run: Run, lead: dict, start_local: str, ledger: Ledger, leads: Leads, 
     run.steps[-1].decision = "created"
     run.steps[-1].data = {**ev, "action_id": meet_key, "start_local": start_local}
     ledger.done(meet_key, ev.get("event_id", "simulated"))
+    recovery.complete(ledger.s, meet_key)
     ledger.begin(reply_key, run.run_id, "replyread")
     ledger.done(reply_key)
     leads.save(lead["email"], {"pending_booking": "", "status": "meeting_booked", "meeting": start_local})
@@ -340,10 +426,17 @@ def _book(run: Run, lead: dict, start_local: str, ledger: Ledger, leads: Leads, 
     text = (f"✅ Meeting booked{' (dry run)' if not live else ''}\n*{lead.get('name')}* — "
             f"{lead.get('company') or lead['email']}\n{start_local} {morgan.tz()}\n"
             f"Source: LinkedIn comment · {'warm account' if lead.get('warm') else 'cold lead'}")
+    notify_key = 'notify:' + meet_key
+    recovery.record(ledger, run, notify_key, 'notification', 'Notification queued', retryable=True, payload={'text': text})
+    if not ledger.begin(notify_key, run.run_id, 'notification'):
+        return run.finish("MEETING_BOOKED", "NOTIFICATION_PENDING", ["Meeting exists; notification is pending reconciliation."])
     try:
         run.step("slack.notify", lambda: notify(text), agent=NAME, output=text)
-    except Exception:  # noqa: BLE001 - the meeting exists; a failed ping is recorded, not fatal
-        pass
+    except Exception as exc:
+        recovery.record(ledger, run, notify_key, 'notification', exc, retryable=not live, payload={'text': text})
+        return run.finish("MEETING_BOOKED", "NOTIFICATION_PENDING", ["Meeting exists; Slack notification failed and is recorded for recovery."])
+    ledger.done(notify_key)
+    recovery.complete(ledger.s, notify_key)
     run.move("NOTIFIED")
     return run.finish("MEETING_BOOKED", "", [f"event at {start_local} {morgan.tz()}"])
 
@@ -361,7 +454,7 @@ def _offer_times(run: Run, lead: dict, reply: dict, approver: Approver, ledger: 
                 **{sid: {"kind": "slot", "text": f"{'Free slot' if s.get('checked') else 'Proposed time (calendar not checked)'} "
                                     f"{s['label']}"} for sid, s in slots.items()}}
     draft, problems = casey.write(run, channel="email", comment={"text": reply["body"]},
-                                  evidence=evidence, allowed={lead["email"]})
+                                  evidence={**evidence, **memory.preferences(leads, run, lead)}, allowed={lead["email"]})
     run.move("ACTION_PROPOSED")
     if problems:
         run.move("REVIEW_REQUIRED")
@@ -383,7 +476,17 @@ def _offer_times(run: Run, lead: dict, reply: dict, approver: Approver, ledger: 
         run.move("BLOCKED_DUPLICATE")
         return run.finish("BLOCKED_DUPLICATE", "ACTION_ALREADY_EXECUTED", [f"{key} already done"])
     subject = "Re: " + (lead.get("subject") or "times to talk")
-    res = casey.send_email(run, to=lead["email"], subject=subject, body=claims.render(draft), live=live)
+    held = memory.check(run, leads, lead)
+    if held:
+        ledger.failed(key, "memory hold before send")
+        run.move("STOPPED")
+        return run.finish(run.state, "MEMORY_HOLD", held)
+    try:
+        res = casey.send_email(run, to=lead["email"], subject=subject, body=claims.render(draft), live=live)
+    except Exception as exc:
+        recovery.record(ledger, run, key, 'send', exc, retryable=not live)
+        run.move('STOPPED')
+        return run.finish(run.state, 'SEND_OUTCOME_UNCONFIRMED', ['Send did not return success; inspect Recovery before retrying.'])
     run.steps[-1].decision = "sent"
     run.steps[-1].data = {**res, "action_id": key, "to": lead["email"], "address": lead["email"],
                           "sentences": draft["sentences"], "evidence_ids": sorted(evidence)}

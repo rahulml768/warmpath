@@ -8,14 +8,17 @@ table the code supplies and checked against the real calendar before anything is
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import urllib.error
 import urllib.request
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 
 URL = "https://api.deepseek.com/v1/chat/completions"
 MODEL = os.environ.get("WARMPATH_MODEL", "deepseek-chat")
+CALL_INFO = ContextVar('model_call_info', default=None)
 
 #: Two rubrics kept side by side so the difference is measured rather than asserted. v1 is the
 #: obvious first draft; v2 describes what buying intent actually is. See evals/.
@@ -128,27 +131,57 @@ class LLMError(Exception):
 
 
 def _call(system: str, user: str, *, temperature: float = 0.0, retries: int = 2) -> dict:
-    key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-    if not key:
-        raise LLMError("DEEPSEEK_API_KEY is not set")
-    body = {"model": MODEL, "temperature": temperature,
-            "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": system},
-                         {"role": "user", "content": user}]}
-    last = None
+    providers = [
+        ('deepseek', URL, os.environ.get('WARMPATH_MODEL', MODEL), os.environ.get('DEEPSEEK_API_KEY', '').strip()),
+        ('cerebras', 'https://api.cerebras.ai/v1/chat/completions',
+         os.environ.get('CEREBRAS_MODEL', 'gpt-oss-120b'), os.environ.get('CEREBRAS_API_KEY', '').strip()),
+    ]
+    if os.environ.get('WARMPATH_LLM_PRIMARY', 'deepseek').lower() == 'cerebras':
+        providers.reverse()
+    providers = [p for p in providers if p[3]]
+    info = {'attempts': [], 'provider': None, 'model': None}
+    CALL_INFO.set(info)
+    if not providers:
+        raise LLMError('No model provider configured: set DEEPSEEK_API_KEY or CEREBRAS_API_KEY')
+    disabled = set()
     for attempt in range(retries + 1):
-        try:
-            req = urllib.request.Request(URL, data=json.dumps(body).encode(), method="POST",
-                                         headers={"Content-Type": "application/json",
-                                                  "Authorization": f"Bearer {key}",
-                                                  "User-Agent": "warmpath/0.1"})
-            with urllib.request.urlopen(req, timeout=60) as r:
-                payload = json.loads(r.read())
-            return json.loads(payload["choices"][0]["message"]["content"])
-        except (urllib.error.URLError, TimeoutError, KeyError, json.JSONDecodeError) as exc:
-            last = exc
+        for provider, url, model, key in providers:
+            if provider in disabled:
+                continue
+            body = {'model': model, 'temperature': temperature, 'stream': False,
+                    'response_format': {'type': 'json_object'},
+                    'messages': [{'role': 'system', 'content': system + '\nReturn one JSON object.'},
+                                 {'role': 'user', 'content': user}]}
+            record = {'provider': provider, 'model': model, 'attempt': attempt + 1}
+            info['attempts'].append(record)
+            try:
+                req = urllib.request.Request(url, data=json.dumps(body).encode(), method='POST',
+                    headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {key}', 'User-Agent': 'warmpath/0.1'})
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    payload = json.loads(response.read())
+                choice = payload['choices'][0]
+                if choice.get('finish_reason') == 'length':
+                    raise ValueError('truncated output')
+                result = json.loads(choice['message']['content'])
+                if not isinstance(result, dict):
+                    raise ValueError('expected JSON object')
+                record['status'] = 'ok'
+                info.update(provider=provider, model=model)
+                return result
+            except urllib.error.HTTPError as exc:
+                record['status'] = f'HTTP {exc.code}'
+                # Quota/auth/configuration errors should switch providers immediately.
+                if 400 <= exc.code < 500:
+                    disabled.add(provider)
+                exc.close()
+            except (urllib.error.URLError, TimeoutError, OSError, KeyError, IndexError, TypeError, ValueError) as exc:
+                record['status'] = type(exc).__name__
+        if len(disabled) == len(providers):
+            break
+        if attempt < retries:
             time.sleep(1.2 * (attempt + 1))
-    raise LLMError(f"model call failed: {last}")
+    failures = '; '.join(f"{a['provider']}: {a['status']}" for a in info['attempts'])
+    raise LLMError('All configured model providers failed: ' + failures)
 
 
 def _grounded(phrases, text: str) -> list[str]:
@@ -163,7 +196,10 @@ def classify(comment: str, *, post: str = "", rubric: str = "v2", temperature: f
     if intent not in {"LEAD", "NOT_LEAD", "UNCERTAIN", "OPT_OUT"}:
         intent = "UNCERTAIN"                       # an unrecognised answer is not a yes
     try:
-        conf = max(0.0, min(1.0, float(out.get("confidence", 0))))
+        raw_conf = out.get("confidence", 0)
+        conf = float(raw_conf)
+        if isinstance(raw_conf, bool) or not math.isfinite(conf) or not 0 <= conf <= 1:
+            conf = 0.0
     except (TypeError, ValueError):
         conf = 0.0
     signals = out.get("signals") or []

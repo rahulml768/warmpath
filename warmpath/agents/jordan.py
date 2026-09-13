@@ -51,7 +51,7 @@ def resolve_identity(run: Run, comment: dict, contacts: list[dict], ours: set[st
         company = current.get("company") or ""
         site = current.get("website") or ""
         if not site and current.get("company_id"):
-            info = unipile.get_company(current["company_id"])
+            info = run.step('linkedin.company', lambda: unipile.get_company(current["company_id"]), agent=NAME)
             site = (info or {}).get("website", "")
         if site and is_company_domain(site, ours):
             domain, domain_source = domain_of(site), "company LinkedIn page"

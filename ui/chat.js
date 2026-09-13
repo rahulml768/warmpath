@@ -45,7 +45,7 @@ function cardHtml(m) {
         </div></div>`;
     }
     case "draft":
-      return `<div class="card"><h4>${p.channel === "email" ? "Email draft" : "LinkedIn reply draft"}
+      return `<div class="card"><h4>${p.channel === "introduction" ? "Introduction request to your known contact" : p.channel === "email" ? "Email draft" : "LinkedIn reply draft"}
           ${p.passed ? `<span class="pill p-ok">every claim backed${p.attempts > 1 ? " · rewrote once" : ""}</span>` : '<span class="pill p-bad">claims failed · not sent</span>'}</h4>
         ${sentencesHtml(p)}
         <div style="font-size:11.5px;color:var(--muted);margin-top:6px">Hover a tag to see the evidence behind each sentence.</div>
@@ -55,6 +55,7 @@ function cardHtml(m) {
       const label = {approved: "Approved", rejected: "Ignored", review: "Held for your review", timeout: "No answer · nothing sent",
                      expired: "Expired · a fresh card was posted below"}[p.status] || "";
       return `<div class="card ${done ? "" : "approve"}"><h4>Send it?</h4>
+        <div style="white-space:pre-wrap;margin-bottom:12px">${esc(p.card || "")}</div>
         <div style="color:var(--soft);font-size:13px">Approve here or reply <b>send</b> in Slack. First answer wins; silence sends nothing.</div>
         ${done ? `<div class="btns"><span class="pill ${p.status === "approved" ? "p-ok" : "p-mute"}">${label}${p.via ? " · via " + esc(p.via) : ""}</span></div>`
                : `<div class="btns"><button class="btn primary" data-approve="send" data-run="${esc(p.run_id)}">Send</button>
@@ -71,6 +72,8 @@ function cardHtml(m) {
           ${(p.violations || []).length ? `<span class="pill p-bad">${p.violations.length} rule(s) broken</span>` : '<span class="pill p-ok">audit clean</span>'}
           <button class="btn" data-trace="${esc(p.run_id)}" style="margin-left:auto;padding:3px 10px">Trace</button></div>
         ${what ? `<div style="margin-top:6px;color:var(--ink)">${what}</div>` : ""}
+        ${p.route && p.route.connector ? `<div class="kv" style="margin-top:12px"><div>Chosen path</div><div>You → ${esc(p.route.connector)} → ${esc(p.route.prospect)}<br><small>The contact-to-prospect connection is unconfirmed; the request asks whether they can help.</small></div><div>Why this contact</div><div>${esc(p.route.evidence)}</div></div>` : ""}
+        ${(p.memory_holds || []).length ? `<div style="margin-top:12px"><b>Remembered before acting</b>${p.memory_holds.map(h => `<div class="sent">${esc(h.text)}<br><small>Source: ${esc(h.source)}</small></div>`).join('')}</div>` : ""}
         ${!p.action && (p.evidence || []).length ? `<div style="color:var(--body);font-size:13px;margin-top:6px">Why: ${p.evidence.map(esc).join(" · ")}</div>` : ""}</div>`;
     }
     case "reply":
@@ -164,4 +167,4 @@ document.addEventListener("click", async ev => {
 
 show(location.hash.slice(1));
 loadChat();
-setInterval(loadChat, 1500);
+setInterval(() => { if (!document.hidden) loadChat(); }, 2500);

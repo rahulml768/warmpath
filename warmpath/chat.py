@@ -119,7 +119,7 @@ def cards_so_far(chat: Chat, run: Run, comment: dict, sent: set[str]) -> None:
         last = checks[-1].data or {}
         draft_step = _step(run, "llm.draft")
         chat.post("Casey", "draft", run_id=run.run_id,
-                  channel="email" if "channel=email" in (draft_step.input if draft_step else "") else "linkedin_reply",
+                  channel="introduction" if run.kind == "introduction" else ("email" if "channel=email" in (draft_step.input if draft_step else "") else "linkedin_reply"),
                   sentences=last.get("sentences", []),
                   evidence={k: v.get("text") for k, v in (last.get("evidence") or {}).items()},
                   passed=checks[-1].decision == "pass", attempts=len(checks),
@@ -139,7 +139,8 @@ class ChatApprover:
         where = None
         if os.environ.get("SLACK_APPROVER_ID") and os.environ.get("WARMPATH_SLACK_APPROVALS", "1") != "0":
             try:
-                where = slack.post(os.environ["SLACK_APPROVER_ID"].strip(), payload["card"])
+                where = slack.post(os.environ["SLACK_APPROVER_ID"].strip(), payload["card"] +
+                                   "\nReply in this message's thread with exactly: send, review, or ignore.")
             except Exception as exc:  # noqa: BLE001 - chat approval still works without Slack
                 self.chat.post("Alex", "text", f"Slack didn't take the card ({str(exc)[:80]}), so answer here.")
         answer, via, end, last_slack = "timeout", "", time.time() + self.timeout_s, 0.0
@@ -169,6 +170,9 @@ def result_card(chat: Chat, run: Run) -> None:
               evidence=run.evidence, action=send.tool if send else "",
               simulated=(send.data or {}).get("simulated") if send else None,
               to=(send.data or {}).get("to") if send else "",
+              route=(_step(run, "intro.route").data if _step(run, "intro.route") else {}),
+              memory_holds=[hold for step in run.steps if step.tool == "memory.check"
+                            for hold in (step.data or {}).get("holds", [])],
               violations=[v.invariant for v in audit.audit_run(run)])
 
 
@@ -325,6 +329,8 @@ def _scan(chat: Chat, source: str) -> None:
 
 def _replies(chat: Chat) -> None:
     led, leads = Ledger(), Leads()
+    from . import introductions
+    introductions.check_replies(leads, chat)
     waiting = [l for l in leads.all() if l.get("email") and l.get("status") in ("awaiting_reply", "meeting_pending", None)]
     chat.post("Alex", "delegation", f"Morgan, check replies from the {len(waiting)} people we emailed.", to="Morgan")
     runs = []

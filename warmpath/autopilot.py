@@ -45,6 +45,9 @@ class Autopilot:
         self.status = {"last_tick": "", "next_tick": "", "ticks": 0, "last_error": "", "last_found": ""}
         # A founder away from the desk is not a "no". Autopilot cards wait a day; silence still sends nothing.
         self.approval_timeout_s = int(os.environ.get("WARMPATH_APPROVAL_TIMEOUT_S", str(24 * 3600)))
+        self.tick_started = 0.0
+        self.alerted: set[str] = set()
+        self.status.update(health="ok", issues=[], alerts=[])
 
     # ── storage ────────────────────────────────────────────────────────────────
     @property
@@ -85,24 +88,127 @@ class Autopilot:
         for row in self.s.select("claims", {"status": "in_progress"}):
             self.release(row["key"], "failed")
         threading.Thread(target=self._loop, daemon=True, name="autopilot").start()
+        threading.Thread(target=self._watchdog, daemon=True, name="autopilot-watchdog").start()
         return self
+
+    # ── watching the watcher ───────────────────────────────────────────────────
+    #: A tick that runs longer than this is stuck on something (a mailbox, the database, a provider).
+    TICK_STUCK_S = int(os.environ.get("WARMPATH_TICK_STUCK_S", "90"))
+    #: Work that isn't waiting on the founder and hasn't finished in this long is stuck.
+    WORK_STUCK_S = int(os.environ.get("WARMPATH_WORK_STUCK_S", "600"))
+    #: A claim nobody in this process is working on, left in_progress this long, was abandoned.
+    ORPHAN_CLAIM_S = int(os.environ.get("WARMPATH_ORPHAN_CLAIM_S", "300"))
+
+    def alert(self, key: str, text: str) -> None:
+        """Say it once, where the founder already looks: the chat and Slack."""
+        if key in self.alerted:
+            return
+        self.alerted.add(key)
+        self.status.setdefault("alerts", []).append({"at": _now(), "text": text})
+        self.status["alerts"] = self.status["alerts"][-20:]
+        try:
+            self.chat.post("Alex", "text", f"⚠️ {text}")
+        except Exception:  # noqa: BLE001 - the database may be the thing that is down
+            pass
+        try:
+            pipeline.slack_notifier(f"⚠️ WarmPath: {text}")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def health(self) -> list[tuple[str, str]]:
+        """What is wrong right now, as (stable key, message). Empty means healthy."""
+        issues = []
+        now = time.time()
+        if self.enabled and self.tick_started and now - self.tick_started > self.TICK_STUCK_S:
+            issues.append(("heartbeat-stuck", f"heartbeat stuck: one check has been running for {int(now - self.tick_started)}s"))
+        last = self.status.get("last_tick")
+        if self.enabled and last and not self.tick_started:
+            age = now - datetime.fromisoformat(last).timestamp()
+            if age > max(60, self.interval_s * 6):
+                issues.append(("heartbeat-stopped", f"heartbeat stopped: no check for {int(age)}s"))
+        for item in list(self.inflight.values()):
+            if item.get("stage") == "Waiting for your approval":
+                continue
+            age = now - datetime.fromisoformat(item["since"]).timestamp()
+            if age > self.WORK_STUCK_S:
+                issues.append((f"work-stuck:{item['key']}", f"{item['who'] or item['key']} stuck at '{item['stage']}' for {int(age // 60)} min"))
+        return issues
+
+    def _watchdog(self) -> None:
+        while True:
+            time.sleep(10)
+            self.sweep()
+
+    def sweep(self) -> None:
+        """One watchdog pass: alert on what is stuck, and release work nobody is doing any more."""
+        try:
+            issues = self.health()
+            for key, text in issues:
+                self.alert(key, text)
+            # Claims left in_progress with no worker behind them (a crashed thread, a failed database
+            # write on release) would block that comment or reply forever. Release them as failed so
+            # the next heartbeat retries - the ledger still stops a repeat send.
+            for row in self.s.select("claims", {"status": "in_progress"}):
+                if row["key"] in self.inflight:
+                    continue
+                age = time.time() - datetime.fromisoformat(row["updated"]).timestamp()
+                if age > self.ORPHAN_CLAIM_S:
+                    self.release(row["key"], "failed")
+                    self.alert(f"orphan:{row['key']}", f"released abandoned work '{row['key'][:60]}' after "
+                                                       f"{int(age // 60)} min - it will be retried")
+            self.status["health"] = "ok" if not issues else "degraded"
+            self.status["issues"] = [text for _, text in issues]
+            live = {key for key, _ in issues}
+            # Once a problem clears, it may alert again if it comes back.
+            self.alerted = {k for k in self.alerted if k in live or k.startswith(("orphan:", "audit:"))}
+        except Exception as exc:  # noqa: BLE001 - the watchdog must outlive whatever broke
+            self.status["health"] = "degraded"
+            self.status["issues"] = [f"watchdog could not check: {type(exc).__name__}: {str(exc)[:120]}"]
+
+    def audit_now(self, run) -> None:
+        """Lemma's loop, online: every run is audited the moment it ends, and a broken rule is an alert,
+        a stored issue and a regression case - not something found later on a dashboard."""
+        from . import audit
+        try:
+            report = audit.audit_all([run])
+        except Exception as exc:  # noqa: BLE001
+            self.alert(f"audit-failed:{run.run_id}", f"could not audit run {run.run_id}: {str(exc)[:120]}")
+            return
+        if report["violations"]:
+            broken = "; ".join(f"{i['agent']} broke {k}" for k, i in report["issues"].items())
+            self.alert(f"audit:{run.run_id}", f"run {run.run_id} broke a rule - {broken}. Saved as a regression case.")
 
     def _loop(self) -> None:
         while True:
-            if self.enabled:
-                try:
-                    self.tick()
-                except Exception as exc:  # noqa: BLE001 - a bad tick must never kill the heartbeat
-                    self.status["last_error"] = f"{type(exc).__name__}: {str(exc)[:160]}"
-                    traceback.print_exc()
+            self.beat()
             self.status["next_tick"] = datetime.fromtimestamp(time.time() + self.interval_s, timezone.utc).isoformat()
             self.wake.wait(self.interval_s)
             self.wake.clear()
 
+    def beat(self) -> None:
+        """One heartbeat. Whatever fails inside is recorded; the heartbeat itself never dies."""
+        try:
+            if self.enabled:
+                self.tick()
+        except Exception as exc:  # noqa: BLE001
+            self.status["last_error"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+            traceback.print_exc()
+
     def tick(self) -> None:
+        self.tick_started = time.time()
+        try:
+            self._tick()
+        finally:
+            self.tick_started = 0.0
+
+    def _tick(self) -> None:
         with self.lock:
             self.status.update(last_tick=_now(), ticks=self.status["ticks"] + 1, last_error="")
             demo_post, contacts_file = _source_files()
+            from . import introductions
+            from . import recovery
+            recovery.retry_notifications(Ledger(), pipeline.slack_notifier)
+            introductions.check_replies(Leads(), self.chat)
             contacts = json.loads(Path(contacts_file).read_text(encoding="utf-8"))
             for w in self.watches():
                 path = demo_post if w["source"] == "demo" else w["source"]
@@ -124,6 +230,8 @@ class Autopilot:
                     # Only a booking that FAILED is resumed. One that is still being written by
                     # another worker is pending in the ledger, and resuming it would book twice.
                     if Ledger().status(action_id("meeting", lead["email"])) != "failed":
+                        continue
+                    if not recovery.due(self.s, action_id('meeting', lead['email'])):
                         continue
                     key = f"resume:{lead['email']}:{lead['pending_booking']}:{time.strftime('%H%M')}"
                     if self.claim(key, "resume"):
@@ -153,7 +261,7 @@ class Autopilot:
             except Exception as exc:  # noqa: BLE001 - released as failed, so the next tick retries it
                 self.release(key, "failed")
                 self.chat.post("Alex", "text", f"I couldn't finish {who or 'an item'} ({type(exc).__name__}: "
-                                               f"{str(exc)[:100]}). Nothing was sent - I'll retry on the next heartbeat.")
+                                               f"{str(exc)[:100]}). Check the trace and Recovery for confirmed and uncertain actions.")
                 traceback.print_exc()
             finally:
                 self.inflight.pop(key, None)
@@ -173,6 +281,7 @@ class Autopilot:
         run = pipeline.process_comment(c, post_text=post.get("text", ""), approver=Tracking(chat, c, sent, timeout_s=self.approval_timeout_s),
                                        contacts=contacts, ledger=Ledger(), leads=Leads())
         run.save()
+        self.audit_now(run)
         cards_so_far(chat, run, c, sent)
         result_card(chat, run)
 
@@ -193,6 +302,7 @@ class Autopilot:
         run = pipeline.process_reply(lead, reply, approver=Tracking(chat, {"text": reply.get("body", "")}, {"intent", "jordan"}, timeout_s=self.approval_timeout_s),
                                      notify=notify, ledger=Ledger(), leads=Leads())
         run.save()
+        self.audit_now(run)
         m = _step(run, "meeting.read")
         if m:
             chat.post("Morgan", "meeting_read", run_id=run.run_id, wants=m.decision,
@@ -206,6 +316,7 @@ class Autopilot:
 
     def snapshot(self) -> dict:
         return {"enabled": self.enabled, "interval_s": self.interval_s, "mode": mode(), **self.status,
+                "tick_running_s": int(time.time() - self.tick_started) if self.tick_started else 0,
                 "watches": self.watches(), "inflight": list(self.inflight.values())}
 
 

@@ -9,3 +9,6 @@ runs/
 sample/
 *.sqlite
 *.sqlite-journal
+render-env.txt
+render-access-key.txt
+render-missing.txt

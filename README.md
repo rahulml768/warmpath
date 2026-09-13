@@ -47,6 +47,47 @@ Five agents, each with written instructions. The instructions are not decoration
 
 ## Apps
 
+### Persistent account and contact memory
+
+Open **Leads → Account and contact memory** to record a do-not-contact rule, follow-up date,
+active conversation, relationship note or writing preference. Use a verified email/LinkedIn
+identity for contact scope, a company domain for account scope, or `founder` for founder scope.
+Each record retains its source, creation date, expiry and whether it was inferred. Archive a
+record and add a replacement to correct it; archiving preserves the original evidence.
+
+New lead outreach and introduction requests recheck restrictions after approval, before sending.
+Scheduling emails and calendar writes also check contact/account restrictions. Explicit opt-out
+phrases in comments and reply bodies become persistent restrictions; model-classified comment
+opt-outs are also retained as inferred restrictions. Detection is conservative, not exhaustive.
+Active introductions hold additional outreach at the same company. Confirmed founder writing
+preferences are supplied to Casey as instructions, not product facts.
+
+Follow-up dates hold outreach until the date expires; they do not schedule an automatic send.
+Expired records remain visible for review and any subsequent send still needs approval.
+Relationship outcomes remain on the lead's introduction record. Identity matching uses known
+email, profile URL and author ID; memory cannot link identities that have no shared identifier.
+Dry-run and live records are isolated. Data uses the existing `settings` table in SQLite or
+Supabase, so no migration is needed. This is a persistent pre-action check, not a distributed
+transaction covering an external provider write.
+
+### Approved introductions
+
+For new leads, Jordan prefers a known company contact with reciprocal relationship evidence
+when the founder does not already know the prospect. Alex shows the recipient, evidence and
+exact introduction request in the app and Slack. Only approval sends the request; the prospect
+is not emailed. Set `WARMPATH_INTRODUCTIONS=0` to use the existing direct outreach route.
+
+Autopilot and the chat's reply check look for a response from that contact with the request's
+unique subject marker. The Leads view shows the response for review: choose **Introduction
+happened**, **Still waiting**, or **Declined**. These choices record the outcome; they do not send
+prospect outreach or book a meeting. A connector agreeing to help is not prospect consent.
+Subject matching is conservative and can miss a new thread without the marker.
+
+Dry runs simulate the request and do not poll for its reply. Live requests retain the email
+allowlist requirement: the connector must be allowed. Uncertain send outcomes are held for
+manual mailbox reconciliation, not automatically retried. Introduction state uses the existing
+lead data field in SQLite and Supabase; no migration is required.
+
 | App | Through | Used for |
 |---|---|---|
 | LinkedIn | [Unipile](https://www.unipile.com/) | Read comments on a post, profile → current company → company website (domain), reply under a comment |
@@ -65,6 +106,26 @@ Unipile reaches LinkedIn through the connected member's own session, not LinkedI
 Results: see [BRIEF.md](BRIEF.md) and `evals/last_report.json`.
 
 ## Run it
+
+### Model failover
+
+Set `CEREBRAS_API_KEY` in your local `.env` or deployment environment to enable Cerebras backup.
+DeepSeek is tried first by default; set `WARMPATH_LLM_PRIMARY=cerebras` to reverse the order.
+`CEREBRAS_MODEL` defaults to `gpt-oss-120b`. The adapter uses the official
+[Cerebras chat-completions API](https://inference-docs.cerebras.ai/api-reference/chat-completions).
+
+Missing credentials skip that provider. Quota, authentication and rate-limit errors switch immediately;
+timeouts, server errors and malformed JSON also try the backup before a bounded retry round.
+Each request has a 30-second timeout. Failed 4xx providers are skipped for the remainder of that call.
+All configured providers failing produces an explicit error; it never invents an answer or bypasses
+approval. The trace includes provider/model and sanitized attempt statuses. Replay uses recorded
+responses and does not consume fallback credit.
+
+Restart the process after updating `.env`. For Render, add the same Cerebras environment variables
+to the deployed service; editing the local `.env` does not change a running remote deployment.
+
+See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for canonical identity review, recovery,
+isolated workflow replay, and the required Supabase `002_safe_ledger.sql` upgrade.
 
 Python 3.11+, standard library only.
 

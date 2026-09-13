@@ -34,7 +34,7 @@ INSTRUCTIONS = {k: v for d in AGENTS.values() for k, v in d.items()}
 OWNER = {k: agent for agent, d in AGENTS.items() for k in d}
 
 WRITES = {"gmail.send", "linkedin.reply", "linkedin.post", "calendar.create"}
-SUCCESS_ENDS = {"AWAITING_REPLY", "COMMENT_REPLIED", "NOTIFIED", "MEETING_BOOKED", "POST_PUBLISHED"}
+SUCCESS_ENDS = {"AWAITING_REPLY", "COMMENT_REPLIED", "NOTIFIED", "MEETING_BOOKED", "POST_PUBLISHED", "AWAITING_INTRO"}
 
 
 @dataclass
@@ -77,7 +77,7 @@ def audit_run(run: Run) -> list[Violation]:
                 add(inv, f"{s.tool} without an approved slack.approval before it "
                          f"(last answer: {approvals[-1].decision if approvals else 'none'})")
 
-            if run.kind == "lead":
+            if run.kind in ("lead", "introduction"):
                 cls = _before(run, i, "intent.classify")
                 if not cls or cls[-1].decision != "LEAD" or (cls[-1].confidence or 0) < CONFIDENCE_FLOOR:
                     add("Q1_OUTREACH_ONLY_ON_BUYING_INTENT",
@@ -121,6 +121,14 @@ def audit_run(run: Run) -> list[Violation]:
                 add("J1_NEVER_GUESS_AN_ADDRESS", f"email sent to {to or '?'} which identity.resolve did not verify")
             if to and is_role_mailbox(to):
                 add("J3_NO_DESKS_NO_FREEMAIL_NO_SELF", f"email sent to a shared mailbox {to}")
+
+        if s.tool == "gmail.send" and run.kind == "introduction":
+            routes = _before(run, i, "intro.route")
+            route = routes[-1].data if routes else {}
+            if not route.get("evidence_ids") or data.get("to") != route.get("connector"):
+                add("J1_NEVER_GUESS_AN_ADDRESS", "intro recipient differs from the evidenced connector")
+            if is_role_mailbox(data.get("to", "")):
+                add("J3_NO_DESKS_NO_FREEMAIL_NO_SELF", "intro request sent to a shared mailbox")
 
         if s.tool == "calendar.create":
             resumed = any(x.tool == "ledger.resume" for x in run.steps[:i])

@@ -7,6 +7,8 @@ const face = (n, cls = "av sm") => AV[n] ? `<img class="${cls}" src="agents/${AV
 
 function statePill(s) {
   const map = {
+    AWAITING_INTRO: ["p-acc", "Introduction requested · awaiting response"],
+    MEETING_BOOKED: ["p-ok", "Meeting booked · check notification status"],
     AWAITING_REPLY: ["p-ok", "Email sent · awaiting reply"], COMMENT_REPLIED: ["p-blue", "Replied on LinkedIn"],
     POST_PUBLISHED: ["p-ok", "Post published"],
     NOTIFIED: ["p-ok", "Meeting booked"], MEETING_BOOKED: ["p-ok", "Meeting booked"], IGNORED: ["p-mute", "Ignored"],
@@ -112,12 +114,14 @@ async function openRun(id) {
         ${s.decision ? `<span class="pill ${s.ok ? "p-acc" : "p-bad"}">${esc(s.decision)}${s.confidence != null ? " " + Number(s.confidence).toFixed(2) : ""}</span>` : ""}
         ${!s.ok ? '<span class="pill p-bad">failed</span>' : ""}<span style="color:var(--muted);font-size:11px;margin-left:auto">${s.ms} ms</span></div>
       ${s.input ? `<div style="color:var(--soft);font-size:12px;margin-top:4px">${esc(s.input)}</div>` : ""}
+      ${s.model_call && s.model_call.attempts ? `<details><summary>Model provider: ${esc(s.model_call.provider || 'all failed')}</summary><pre>${esc(JSON.stringify(s.model_call,null,2))}</pre></details>` : ''}
       ${s.error ? `<div class="viol">${esc(s.error)}</div>` : ""}${out}${extra}</div></div>`;
   }).join("");
   const dr = document.getElementById("drawer");
   dr.innerHTML = `<button class="btn" id="close" style="float:right">Close</button>
     <div style="color:var(--muted);font-size:12px">${esc(r.kind)} run · <code>${esc(r.run_id)}</code> · ${esc(r.mode)}</div>
     <h2>${esc(r.subject || r.message_id)}</h2>
+    <button class="btn" id="replay-run">Replay with recorded responses</button><pre id="replay-result" style="white-space:pre-wrap"></pre>
     <div class="row">${statePill(r.state)}${r.reason_code ? `<span class="pill p-mute">${esc(r.reason_code)}</span>` : ""}</div>
     <div class="path">${r.states.map(s => `<span class="pill p-mute">${esc(s)}</span>`).join("→")}</div>
     ${r.evidence && r.evidence.length ? `<div class="say"><b>Why</b><ul style="margin:6px 0 0;padding-left:18px">${r.evidence.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
@@ -126,6 +130,16 @@ async function openRun(id) {
   dr.classList.add("on");
   document.getElementById("scrim").classList.add("on");
   document.getElementById("close").onclick = closeRun;
+  document.getElementById('replay-run').onclick = async event => {
+    event.target.disabled = true;
+    const output = document.getElementById('replay-result');
+    output.textContent = 'Running isolated replay…';
+    try {
+      const response = await fetch('/api/replay', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({run_id:id})});
+      output.textContent = JSON.stringify(await response.json(), null, 2);
+    } catch (error) { output.textContent = error.message; }
+    event.target.disabled = false;
+  };
 }
 function closeRun() { document.getElementById("drawer").classList.remove("on"); document.getElementById("scrim").classList.remove("on"); }
 document.getElementById("scrim").onclick = closeRun;
@@ -161,7 +175,8 @@ function renderPilot() {
   document.getElementById("pilot").innerHTML = `
     <div class="top"><b><span class="pulse ${p.enabled ? "" : "off"}"></span>Autopilot ${p.enabled ? "on" : "paused"}</b>
       <button class="switch" id="pilot-toggle">${p.enabled ? "Pause" : "Resume"}</button></div>
-    <div class="line">Every ${p.interval_s}s · last check ${ago(p.last_tick)}</div>
+    <div class="line">${p.remote ? `Running on the deployed service · every ${p.interval_s}s` : `Every ${p.interval_s}s · last check ${ago(p.last_tick)}`}</div>
+    ${(p.issues || []).map(i => `<div class="line" style="color:#fca5a5" title="${esc(i)}">⚠ ${esc(i)}</div>`).join("")}
     <div class="line">Watching ${(p.watches || []).length} post${(p.watches || []).length === 1 ? "" : "s"}${busy ? ` · ${busy} in progress` : ""}</div>
     ${p.last_error ? `<div class="line" style="color:#fca5a5" title="${esc(p.last_error)}">${esc(p.last_error)}</div>` : ""}`;
   document.getElementById("pilot-toggle").onclick = async () => {
@@ -191,16 +206,77 @@ async function loadLeads() {
       <td class="person"><b>${esc(r.name || "-")}</b><span>${esc(r.email || "no verified address")}</span>${r.comment ? `<div class="said">“${esc(r.comment)}”</div>` : ""}</td>
       <td>${esc(r.company || "-")}${r.domain ? `<div style="color:var(--muted);font-size:12px">${esc(r.domain)}</div>` : ""}</td>
       <td>${r.warm ? `<span class="pill p-acc">warm</span><div style="font-size:12px;color:var(--soft);margin-top:3px">knows ${esc(r.knows)}</div>` : r.intent ? '<span class="pill p-mute">cold</span>' : ""}</td>
-      <td>${stagePill(r)}</td>
+      <td>${stagePill(r)}${r.introduction ? `<div style="font-size:12px;margin-top:6px">Introduction via ${esc(r.introduction.connector_name || r.introduction.connector)}<br>${esc(r.introduction.status)}${r.introduction.reply ? `<details><summary>Read response</summary>${esc(r.introduction.reply)}</details>` : ""}${['response_received', 'waiting'].includes(r.introduction.status) ? `<div class="btns"><button class="btn" data-intro="introduced" data-key="${esc(r.key)}">Introduction happened</button><button class="btn" data-intro="waiting" data-key="${esc(r.key)}">Still waiting</button><button class="btn" data-intro="declined" data-key="${esc(r.key)}">Declined</button></div>` : ""}</div>` : ""}</td>
       <td>${r.meeting ? esc(r.meeting.replace("T", " ").slice(0, 16)) : "-"}</td>
       <td style="white-space:nowrap">${ago(r.last)}${(r.runs || []).length ? `<div><button class="btn" data-run="${esc(r.runs[r.runs.length - 1])}" style="padding:2px 8px;font-size:11px;margin-top:4px">Trace</button></div>` : ""}</td>
     </tr>`).join("") : `<tr><td colspan="6"><div class="empty">No leads yet. Give Alex a post to watch.</div></td></tr>`;
 }
 document.getElementById("tick-now").onclick = async () => { await fetch("/api/autopilot", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({tick: true})}); setTimeout(loadLeads, 1500); };
 
+document.addEventListener('click', async event => {
+  const button = event.target.closest('[data-intro]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/introduction/resolve', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({key: button.dataset.key, outcome: button.dataset.intro})});
+    if (!response.ok) throw new Error((await response.json()).error || 'Could not save review');
+    await loadLeads();
+  } catch (error) { alert(error.message); button.disabled = false; }
+});
+
 loadState();
 loadPilot();
 loadLeads();
-setInterval(loadState, 3000);
-setInterval(loadPilot, 3000);
-setInterval(loadLeads, 4000);
+async function loadMemory() {
+  const response = await fetch('/api/memory');
+  if (!response.ok) return;
+  const data = await response.json();
+  document.getElementById('memory-records').innerHTML = `<p>${esc(data.mode)} memory</p>` + data.records.map(r =>
+    `<div class="sent"><b>${esc(r.target)} · ${esc(r.kind)}</b> ${r.active ? '' : '(archived)'} ${r.active && r.expires && new Date(r.expires) <= new Date() ? (r.kind === 'follow_up' ? '· Follow-up due — review before outreach' : '· Expired') : ''}<br>${esc(r.text)}<br><small>${esc(r.source)} · ${esc(r.created_at)} ${r.inferred ? '· inferred restriction' : ''} ${r.expires ? '· expires ' + esc(r.expires) : ''}</small>${r.active ? `<button class="btn" data-memory-archive="${esc(r.id)}">Archive</button>` : ''}</div>`).join('');
+}
+document.getElementById('memory-form').onsubmit = async event => {
+  event.preventDefault();
+  const body = Object.fromEntries(new FormData(event.target));
+  if (body.expires) body.expires = new Date(body.expires).toISOString();
+  const response = await fetch('/api/memory', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  if (!response.ok) { alert((await response.json()).error); return; }
+  event.target.reset(); await loadMemory();
+};
+document.addEventListener('click', async event => {
+  const button = event.target.closest('[data-memory-archive]');
+  if (!button) return;
+  const response = await fetch('/api/memory', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({archive:button.dataset.memoryArchive})});
+  if (!response.ok) { alert((await response.json()).error); return; }
+  await loadMemory();
+});
+loadMemory().catch(() => {});
+async function loadOperations() {
+  const response = await fetch('/api/operations');
+  if (!response.ok) return;
+  const d = await response.json();
+  document.getElementById('operations').innerHTML = `<p>${d.identities.length} canonical identities. Reviews do not send outreach; rescan after correcting an identity.</p>` +
+    d.conflicts.filter(c => c.status === 'pending').map(c => `<div class="sent"><b>Identity conflict</b><pre>${esc(JSON.stringify({previous:c.existing.map(p => ({name:p.name,email:p.email,domain:p.domain})),proposed:c.proposed},null,2))}</pre><button class="btn" data-operation="identity" data-id="${esc(c.id)}" data-choice="keep">Keep existing</button> <button class="btn" data-operation="identity" data-id="${esc(c.id)}" data-choice="accept">Accept updated facts</button></div>`).join('') +
+    d.recovery.filter(r => r.status !== 'resolved').map(r => `<div class="sent"><b>${esc(r.kind)} · ${esc(r.status)}</b><br>${esc(r.error)}<br>Attempts: ${r.retry_count} · next eligible retry: ${esc(r.next_retry_at)}<br>${r.status === 'review' ? `<p>Check the provider before confirming. Recovery never assumes a timed-out action failed.</p><button class="btn" data-operation="recovery" data-id="${esc(r.id)}" data-choice="performed">Verified performed</button> <button class="btn" data-operation="recovery" data-id="${esc(r.id)}" data-choice="not_performed">Verified not performed</button>` : ''}</div>`).join('');
+}
+document.addEventListener('click', async event => {
+  const b = event.target.closest('[data-operation]');
+  if (!b) return;
+  b.disabled = true;
+  try {
+    const identity = b.dataset.operation === 'identity';
+    const eventId = !identity && b.dataset.choice === 'performed' ? prompt('If this was a calendar action, enter its verified event ID. Otherwise leave blank.') : '';
+    if (eventId === null) { b.disabled = false; return; }
+    const response = await fetch(identity ? '/api/identity/review' : '/api/recovery/reconcile', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:b.dataset.id,decision:b.dataset.choice,outcome:b.dataset.choice,event_id:eventId})});
+    if (!response.ok) throw new Error((await response.json()).error);
+    await loadOperations();
+  } catch (error) { alert(error.message); b.disabled = false; }
+});
+loadOperations().catch(() => {});
+// Poll gently, and not at all while the tab is hidden - every request here costs database reads.
+const whenVisible = fn => () => { if (!document.hidden) fn(); };
+setInterval(whenVisible(() => loadOperations().catch(() => {})), 15000);
+setInterval(whenVisible(() => loadMemory().catch(() => {})), 15000);
+setInterval(whenVisible(loadState), 6000);
+setInterval(whenVisible(loadPilot), 5000);
+setInterval(whenVisible(loadLeads), 6000);

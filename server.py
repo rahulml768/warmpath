@@ -201,6 +201,23 @@ def integrations(force: bool = False) -> list[dict]:
     return data
 
 
+_CACHE: dict[str, tuple[float, object]] = {}
+_CACHE_LOCK = __import__("threading").Lock()
+
+
+def _cached(key: str, ttl: float, fn):
+    """Several open tabs polling the same dashboard should cost one database read, not one each."""
+    now = time.time()
+    with _CACHE_LOCK:
+        hit = _CACHE.get(key)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+    value = fn()
+    with _CACHE_LOCK:
+        _CACHE[key] = (time.time(), value)
+    return value
+
+
 def _access_key() -> str:
     import os
     return os.environ.get("WARMPATH_ACCESS_KEY", "").strip()
@@ -264,6 +281,59 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "run_id and decision (send|review|ignore) required"}, 400)
             CHAT.decide(str(body["run_id"]), decision)
             return self._json({"ok": True})
+        if path == "/api/introduction/resolve":
+            from warmpath import introductions
+            try:
+                introductions.resolve(Leads(), str(body.get("key") or ""), str(body.get("outcome") or ""))
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 400)
+            return self._json({"ok": True})
+        if path == "/api/memory":
+            from warmpath.memory import Memory
+            mem = Memory(Leads().s)
+            try:
+                if body.get("archive"):
+                    mem.archive(str(body["archive"]))
+                else:
+                    target = str(body.get("target") or "").strip()
+                    if body.get("scope") == "contact" and not target.startswith(("email:", "profile_url:", "author_id:")):
+                        target = ("email:" if "@" in target else "profile_url:") + target
+                    mem.remember(scope=body.get("scope"), target=target,
+                                 kind=body.get("kind"), text=body.get("text") or "",
+                                 source="Founder entered in console", expires=str(body.get("expires") or ""))
+            except (ValueError, TypeError) as exc:
+                return self._json({"error": str(exc)}, 400)
+            return self._json({"ok": True})
+        if path == "/api/identity/review":
+            from warmpath import entities
+            try:
+                entities.review(Leads().s, str(body.get('id') or ''), str(body.get('decision') or ''))
+            except ValueError as exc:
+                return self._json({'error': str(exc)}, 400)
+            return self._json({'ok': True})
+        if path == "/api/recovery/reconcile":
+            from warmpath import recovery
+            try:
+                recovery.reconcile(Leads().s, str(body.get('id') or ''), str(body.get('outcome') or ''), str(body.get('event_id') or ''))
+            except ValueError as exc:
+                return self._json({'error': str(exc)}, 400)
+            return self._json({'ok': True})
+        if path == "/api/replay":
+            import os
+            import subprocess
+            from warmpath import store
+            row = store.store().get('runs', str(body.get('run_id') or ''))
+            if not row:
+                return self._json({'error': 'Run not found'}, 404)
+            env = {k: v for k, v in os.environ.items() if k.upper() in ('SYSTEMROOT', 'PATH', 'TEMP', 'TMP', 'WINDIR')}
+            env['PYTHONIOENCODING'] = 'utf-8'
+            try:
+                proc = subprocess.run([sys.executable, '-m', 'warmpath.replay'], cwd=ROOT,
+                    input=json.dumps(row), capture_output=True, text=True, encoding='utf-8', env=env, timeout=30)
+                report = json.loads(proc.stdout)
+            except (subprocess.TimeoutExpired, ValueError):
+                return self._json({'error': 'Replay failed or exceeded its time limit'}, 400)
+            return self._json(report, 200 if proc.returncode == 0 else 400)
         if path == "/api/chat/clear":
             CHAT.clear()
             return self._json({"ok": True})
@@ -288,13 +358,32 @@ class Handler(BaseHTTPRequestHandler):
             from warmpath import chat as chat_mod
             return self._json({"messages": CHAT.messages(), "mode": mode(), "busy": chat_mod._busy.locked()})
         if path == "/api/autopilot":
-            return self._json(AUTOPILOT_REF.snapshot() if AUTOPILOT_REF else {"enabled": False})
+            if AUTOPILOT_REF:
+                return self._json(AUTOPILOT_REF.snapshot())
+            import os
+            from warmpath import store
+            st = store.store()
+            setting = st.get("settings", "autopilot")
+            watches = [{"source": w["source"], "label": w["label"], "added": w["added"]}
+                       for w in st.select("watches", {"active": True})]
+            return self._json({"enabled": (setting or {}).get("value", "1") == "1", "remote": True,
+                               "interval_s": int(os.environ.get("WARMPATH_HEARTBEAT_S", "5")),
+                               "watches": watches, "inflight": [], "last_tick": "", "last_error": ""})
         if path == "/api/leads":
-            return self._json({"leads": leads_view()})
+            return self._json({"leads": _cached("leads", 3, leads_view)})
+        if path == "/api/memory":
+            from warmpath.memory import Memory
+            return self._json({"records": Memory(Leads().s).all(), "mode": mode()})
+        if path == '/api/operations':
+            from warmpath.entities import rows
+            storage = Leads().s
+            return self._json({'identities': rows(storage, f'person:{mode()}:'),
+                               'conflicts': rows(storage, f'identity-conflict:{mode()}:'),
+                               'recovery': rows(storage, f'recovery:{mode()}:')})
         if path == "/api/integrations":
             return self._json({"integrations": integrations("force" in self.path)})
         if path == "/api/state":
-            return self._send(200, json.dumps(state(), default=str).encode(), "application/json")
+            return self._send(200, json.dumps(_cached("state", 5, state), default=str).encode(), "application/json")
         if path.startswith("/api/run/"):
             from warmpath import store
             row = store.store().get("runs", Path(path).name)

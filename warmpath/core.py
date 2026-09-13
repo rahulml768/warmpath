@@ -8,6 +8,7 @@ proposes an intent and a draft; this module decides whether anything may leave t
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sqlite3
@@ -47,13 +48,13 @@ STATES = {
     "REPLY_RECEIVED", "MEETING_READ", "SLOT_CHECKED", "MEETING_BOOKED", "CALENDAR_FAILED",
     "NOTIFIED",
     # a post: a goal turned into something public
-    "POST_PUBLISHED",
+    "POST_PUBLISHED", "AWAITING_INTRO",
     # exits
     "IGNORED", "REVIEW_REQUIRED", "BLOCKED", "STOPPED", "BLOCKED_DUPLICATE",
 }
 
 TERMINAL = {"IGNORED", "REVIEW_REQUIRED", "BLOCKED", "STOPPED", "BLOCKED_DUPLICATE",
-            "COMMENT_REPLIED", "AWAITING_REPLY", "NOTIFIED", "POST_PUBLISHED"}
+            "COMMENT_REPLIED", "AWAITING_REPLY", "NOTIFIED", "POST_PUBLISHED", "AWAITING_INTRO"}
 
 #: Legal moves only. `RECEIVED -> EMAIL_SENT` is not reachable because it is not written
 #: down here, which is a stronger guarantee than a comment saying it should not happen.
@@ -65,11 +66,11 @@ TRANSITIONS = {
     "ACTION_PROPOSED": {"AWAITING_APPROVAL", "REVIEW_REQUIRED", "BLOCKED", "BLOCKED_DUPLICATE"},
     "AWAITING_APPROVAL": {"APPROVED", "STOPPED", "REVIEW_REQUIRED"},
     "APPROVED": {"EMAIL_SENT", "COMMENT_REPLIED", "POST_PUBLISHED", "BLOCKED_DUPLICATE", "STOPPED"},
-    "EMAIL_SENT": {"AWAITING_REPLY"},
+    "EMAIL_SENT": {"AWAITING_REPLY", "AWAITING_INTRO"},
     "REPLY_RECEIVED": {"MEETING_READ", "BLOCKED_DUPLICATE"},
     "MEETING_READ": {"SLOT_CHECKED", "ACTION_PROPOSED", "IGNORED", "REVIEW_REQUIRED", "BLOCKED"},
     "SLOT_CHECKED": {"MEETING_BOOKED", "CALENDAR_FAILED", "REVIEW_REQUIRED", "BLOCKED_DUPLICATE"},
-    "CALENDAR_FAILED": {"MEETING_BOOKED", "CALENDAR_FAILED"},
+    "CALENDAR_FAILED": {"MEETING_BOOKED", "CALENDAR_FAILED", "BLOCKED_DUPLICATE", "REVIEW_REQUIRED"},
     "MEETING_BOOKED": {"NOTIFIED"},
 }
 
@@ -92,6 +93,9 @@ class Step:
     confidence: float | None = None
     error: str = ""
     data: dict = field(default_factory=dict)
+    replay_output: object = None
+    replay_captured: bool = False
+    model_call: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -127,15 +131,19 @@ class Run:
     def step(self, tool: str, fn, **meta):
         """Time a call and record it whether it succeeds or not."""
         t = time.perf_counter()
+        from .llm import CALL_INFO
+        token = CALL_INFO.set(None)
         try:
             out = fn()
             self.steps.append(Step(tool=tool, ok=True, ms=int((time.perf_counter() - t) * 1000),
-                                   **meta))
+                                   replay_output=out, replay_captured=True, model_call=CALL_INFO.get() or {}, **meta))
             return out
         except Exception as exc:  # noqa: BLE001 - recorded, then re-raised
             self.steps.append(Step(tool=tool, ok=False, ms=int((time.perf_counter() - t) * 1000),
-                                   error=f"{type(exc).__name__}: {exc}"[:300], **meta))
+                                   error=f"{type(exc).__name__}: {exc}"[:300], model_call=CALL_INFO.get() or {}, **meta))
             raise
+        finally:
+            CALL_INFO.reset(token)
 
     def record(self, tool: str, ok: bool = True, **meta) -> Step:
         s = Step(tool=tool, ok=ok, ms=0, **meta)
@@ -238,7 +246,13 @@ class Leads:
         return {**extra, **{k: v for k, v in row.items() if k != "data" and v is not None}}
 
     def get(self, key: str) -> dict | None:
-        return self._flat(self.s.get("leads", key))
+        direct = self._flat(self.s.get("leads", key))
+        if direct or '@' not in key:
+            return direct
+        from .entities import rows
+        person_ids = {p['id'] for p in rows(self.s, f'person:{mode()}:')
+                      if 'email:' + key.lower() in p['aliases']}
+        return next((row for row in self.all() if row.get('person_id') in person_ids), None)
 
     def save(self, key: str, data: dict) -> dict:
         merged = {**(self.get(key) or {}), **data}
@@ -299,7 +313,8 @@ def verify_contact(candidate: str, sources: dict[str, str] | list[str]) -> tuple
     cand = (candidate or "").strip().lower()
     if not EMAIL_RE.fullmatch(cand):
         return False, ["no well-formed email address was found in any source"]
-    hits = [name for name, text in sources.items() if cand in (text or "").lower()]
+    hits = [name for name, text in sources.items()
+            if cand in {address.lower() for address in EMAIL_RE.findall(text or "")}]
     if not hits:
         return False, [f"{cand} does not appear in any source"]
     return True, [f"{cand} appears in {hits[0]}"]
@@ -333,7 +348,12 @@ def evaluate(*, intent: str, confidence: float, verified: bool, verify_evidence:
     if intent == NOT_LEAD:
         return Decision(False, "IGNORE", "NO_COMMERCIAL_INTENT",
                         [f"classified NOT_LEAD at confidence {confidence:.2f}"])
-    if intent == UNCERTAIN or confidence < CONFIDENCE_FLOOR:
+    if (intent != LEAD or isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float)) or not math.isfinite(confidence)
+            or not 0 <= confidence <= 1):
+        return Decision(False, "HUMAN_REVIEW", "INVALID_CLASSIFICATION",
+                        ["expected LEAD with finite numeric confidence between 0 and 1"])
+    if confidence < CONFIDENCE_FLOOR:
         return Decision(False, "HUMAN_REVIEW", "LOW_CONFIDENCE",
                         [f"intent {intent} at confidence {confidence:.2f} "
                          f"(floor {CONFIDENCE_FLOOR})"])
@@ -347,6 +367,6 @@ def evaluate(*, intent: str, confidence: float, verified: bool, verify_evidence:
                         ["lead", "verified contact", "awaiting human approval"])
     if approved == "review":
         return Decision(False, "HUMAN_REVIEW", "FOUNDER_WANTS_REVIEW", ["founder chose review"])
-    if not approved:
+    if approved is not True:
         return Decision(False, "STOP", "APPROVAL_REJECTED", ["human rejected the draft"])
     return Decision(True, "SEND_ALLOWED", "APPROVED", ["lead", "verified", "approved"])
