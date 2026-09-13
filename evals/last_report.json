@@ -1,0 +1,35 @@
+{
+  "runs_per_comment": 3,
+  "attempts": {
+    "naive": 24,
+    "warmpath": 24
+  },
+  "silent_failures": {
+    "naive": {
+      "contacted_when_it_should_not": 0,
+      "emailed_a_guessed_address": 0,
+      "emailed_a_shared_desk": 3,
+      "claimed_a_relationship_that_does_not_exist": 3,
+      "third_party_address_in_message": 0
+    },
+    "warmpath": {
+      "contacted_when_it_should_not": 0,
+      "emailed_a_guessed_address": 0,
+      "emailed_a_shared_desk": 0,
+      "claimed_a_relationship_that_does_not_exist": 0,
+      "third_party_address_in_message": 0
+    }
+  },
+  "scenario_pass": [
+    24,
+    24
+  ],
+  "audit_violations": 0,
+  "audit_issues": {},
+  "results": {
+    "COMMENT_REPLIED": 6,
+    "IGNORED": 9,
+    "AWAITING_REPLY": 6,
+    "BLOCKED": 3
+  }
+}

@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+*.db
+runs/
+.venv/
+*.local.json
+sample/
+*.sqlite
+*.sqlite-journal

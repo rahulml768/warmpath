@@ -1,0 +1,121 @@
+{
+  "runs": 2,
+  "correct": 54,
+  "total": 56,
+  "unwanted_posts": 0,
+  "invented_urls": 0,
+  "cases": {
+    "I want to grow, get me more leads": [
+      "grow",
+      "grow"
+    ],
+    "I need more customers this month": [
+      "grow",
+      "grow"
+    ],
+    "We need leads, do something": [
+      "grow",
+      "grow"
+    ],
+    "Help me grow the business": [
+      "grow",
+      "grow"
+    ],
+    "Can you write a LinkedIn post about WarmPath?": [
+      "grow",
+      "grow"
+    ],
+    "Pipeline is empty, help me get some inbound": [
+      "grow",
+      "grow"
+    ],
+    "i wnat more leeds pls": [
+      "grow",
+      "grow"
+    ],
+    "Let's get the word out about the product": [
+      "grow",
+      "grow"
+    ],
+    "Post something on LinkedIn so people know we launched": [
+      "grow",
+      "grow"
+    ],
+    "Sales are slow this week": [
+      "report",
+      "report"
+    ],
+    "Check the comments on https://www.linkedin.com/posts/rahul-activity-7332661864792854528-abcd": [
+      "scan_post",
+      "scan_post"
+    ],
+    "Watch the demo post": [
+      "scan_post",
+      "scan_post"
+    ],
+    "Go through the comments on the demo post": [
+      "scan_post",
+      "scan_post"
+    ],
+    "Anyone interested on my post? https://www.linkedin.com/feed/update/urn:li:activity:7332661864792854528": [
+      "scan_post",
+      "scan_post"
+    ],
+    "Any replies?": [
+      "check_replies",
+      "check_replies"
+    ],
+    "Did John get back to us?": [
+      "check_replies",
+      "check_replies"
+    ],
+    "Has anyone answered our emails?": [
+      "check_replies",
+      "check_replies"
+    ],
+    "Book meetings with whoever said yes": [
+      "check_replies",
+      "check_replies"
+    ],
+    "How did the team do today?": [
+      "report",
+      "report"
+    ],
+    "Did any agent break a rule?": [
+      "report",
+      "report"
+    ],
+    "How many leads came in and what happened to them?": [
+      "report",
+      "report"
+    ],
+    "Hi Alex": [
+      "none",
+      "none"
+    ],
+    "Who is on the team?": [
+      "none",
+      "none"
+    ],
+    "Don't post anything today": [
+      "none",
+      "none"
+    ],
+    "What does Jordan do?": [
+      "none",
+      "none"
+    ],
+    "Thanks": [
+      "none",
+      "none"
+    ],
+    "Check the comments on my post": [
+      "none",
+      "none"
+    ],
+    "Delete my last LinkedIn post": [
+      "none",
+      "none"
+    ]
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "_note": "Synthetic evaluation fixture. Every person, company and address here is invented, on reserved example domains.",
+  "post": {
+    "social_id": "urn:li:activity:fixture",
+    "text": "We just launched WarmPath: an agent that reads buying intent in comments, checks your Gmail and Calendar for an existing relationship with that company, and drafts outreach you approve in Slack."
+  },
+  "comments": [
+    {
+      "comment_id": "c-warm-acme",
+      "post_social_id": "urn:li:activity:fixture",
+      "text": "We're actually looking for something like this for our sales team.",
+      "author_name": "John Smith",
+      "headline": "Head of Revenue Operations at Acme",
+      "profile_url": "https://www.linkedin.com/in/john-smith-acme-example",
+      "profile": {"name": "John Smith", "headline": "Head of Revenue Operations at Acme",
+                  "emails": ["john.smith@acme.example"],
+                  "work": [{"company": "Acme", "website": "https://acme.example", "current": true}]}
+    },
+    {
+      "comment_id": "c-cold-nova",
+      "post_social_id": "urn:li:activity:fixture",
+      "text": "Can this work with our outbound workflow? We have a 6-person SDR team.",
+      "author_name": "Sarah Lee",
+      "headline": "Founder at Nova Labs",
+      "profile_url": "https://www.linkedin.com/in/sarah-lee-nova-example",
+      "profile": {"name": "Sarah Lee", "headline": "Founder at Nova Labs", "emails": [],
+                  "work": [{"company": "Nova Labs", "website": "https://novalabs.example", "current": true}]}
+    },
+    {
+      "comment_id": "c-praise",
+      "post_social_id": "urn:li:activity:fixture",
+      "text": "Great launch 🔥 congrats Rahul!",
+      "author_name": "Mike Chen",
+      "headline": "Product Designer",
+      "profile_url": "https://www.linkedin.com/in/mike-chen-example",
+      "profile": {"name": "Mike Chen", "headline": "Product Designer", "emails": [], "work": []}
+    },
+    {
+      "comment_id": "c-name-collision",
+      "post_social_id": "urn:li:activity:fixture",
+      "text": "Would love a demo for our dispatch team.",
+      "author_name": "Priya Nair",
+      "headline": "Operations Lead at Acme Logistics",
+      "profile_url": "https://www.linkedin.com/in/priya-nair-example",
+      "profile": {"name": "Priya Nair", "headline": "Operations Lead at Acme Logistics",
+                  "emails": ["priya@acmelogistics.example"],
+                  "work": [{"company": "Acme", "website": "https://acmelogistics.example", "current": true}]}
+    }
+  ]
+}

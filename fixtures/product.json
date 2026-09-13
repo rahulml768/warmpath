@@ -1,0 +1,16 @@
+{
+  "_note": "The founder's product brief. These are the only facts Quinn may use in a post; anything else is blocked by the claim check.",
+  "product": "WarmPath",
+  "founder": "Rahul",
+  "facts": {
+    "what": "WarmPath is a team of AI agents that turns buying intent in LinkedIn comments into meetings.",
+    "intent": "Quinn reads the comments on a post and separates real buying intent from praise.",
+    "relationship": "Jordan checks Gmail and Calendar for an existing relationship with the commenter's company, matched by email domain rather than company name.",
+    "claims": "Casey writes the follow-up, and every sentence must cite something the team actually read, or it is not sent.",
+    "approval": "Nothing goes out without the founder's approval in Slack or in the app.",
+    "meetings": "Morgan offers real free times from the calendar and books only a time the prospect accepts.",
+    "addresses": "WarmPath never guesses an email address; without a verified one it replies on LinkedIn instead.",
+    "audit": "Every run is audited against each agent's written instructions, and a broken rule becomes a regression test.",
+    "who_for": "Founders and small sales teams who lose warm leads because they forget who they already know."
+  }
+}
