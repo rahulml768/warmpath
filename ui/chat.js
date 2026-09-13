@@ -179,8 +179,10 @@ function relayStages(runMsgs) {
   const decided = approval && approval.payload.status && approval.payload.status !== "pending";
   const you = {who: "you", label: "You approve", done: !!decided || (!!result && !approval), waiting: !!approval && !decided};
   const finish = {who: "done", label: result ? (result.payload.action ? "Sent" : "Held back") : "Done", done: !!result};
-  if (kinds.has("post_draft")) return [{who: "Quinn", label: "Writes the post", done: true}, you, finish];
-  if (kinds.has("reply") || kinds.has("meeting_read") || kinds.has("offer"))
+  const runKind = (approval && approval.payload.run_kind) ||
+                  (kinds.has("post_draft") ? "post" : kinds.has("meeting_read") || kinds.has("offer") ? "reply" : "lead");
+  if (runKind === "post") return [{who: "Quinn", label: "Writes the post", done: true}, you, finish];
+  if (runKind === "reply")
     return [{who: "Morgan", label: "Reads the reply", done: kinds.has("meeting_read") || kinds.has("offer") || !!result},
             {who: "Casey", label: "Writes it", done: kinds.has("draft") || !!result}, you, finish];
   return [{who: "Quinn", label: "Buying intent?", done: kinds.has("intent")},
